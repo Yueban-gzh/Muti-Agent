@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+*.db
+*.sqlite3
+
+# 日志与导出
+logs/
+reports/exported_reports/
+
+# 模型与大数据（用网盘链接提交）
+models/
+*.pth
+*.bin
+*.safetensors
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 配置（含密钥）
+config.yaml
+!config.example.yaml
