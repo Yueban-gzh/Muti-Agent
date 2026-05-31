@@ -1,32 +1,74 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
 *.egg-info/
-.venv/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual Environment
 venv/
-.env
+.venv/
+env/
+.env/
+ENV/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ============================================================================
+# 项目特定
+# ============================================================================
+
+# SQLite 数据库文件
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite3
 
-# 日志与导出
-logs/
+# 导出的报告
+reports/
 reports/exported_reports/
 
-# 模型与大数据（用网盘链接提交）
+# 日志
+logs/
+*.log
+
+# 敏感配置（API Key）
+os.env
+.env
+*.env
+config.yaml
+
+# 模型与大数据
 models/
 *.pth
 *.bin
 *.safetensors
+*.model
+*.h5
+*.pkl
+*.pt
 
-# IDE
-.idea/
-.vscode/
-*.swp
+# HuggingFace 缓存
+.cache/
 
-# 系统
-.DS_Store
-Thumbs.db
+# PRD PDF（不提交二进制，文本版已放 docs/PRD.md）
+*.pdf
 
-# 配置（含密钥）
-config.yaml
-!config.example.yaml
+# 测试与覆盖率
+.coverage
+htmlcov/
+.pytest_cache/
