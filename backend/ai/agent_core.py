@@ -1,9 +1,12 @@
 """
-AI 核心模块
-----------
-负责与大模型通信，实现多 Agent 的异步并发调用。
-包含后台任务的主处理函数，串联完整的分析流水线：
-  1. 并发 Agent 调用 → 2. 相似度 → 3. 冲突检测 → 4. 加权排名 → 5. 综合建议
+AI 核心模块 — 后台分析流水线编排
+--------------------------------
+负责多 Agent 并发调用与分析后处理，并通过 db 持久化结果。
+
+架构说明:
+  - 纯算法 / Prompt / LLM 调用 → ai/*_core.py、ai/llm/
+  - HTTP 与任务 CRUD → services/ + api/endpoints/
+  - 本模块由 services.pipeline_service 触发
 """
 
 import asyncio
