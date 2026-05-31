@@ -119,6 +119,18 @@ class ConflictResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WeightedRankingItem(BaseModel):
+    """单个 Agent 的加权得分排名"""
+    task_agent_id: int = Field(..., description="Agent 配置 ID")
+    agent_name: str = Field(..., description="Agent 名称")
+    scores: Optional[dict[str, float]] = Field(
+        default=None, description="六维原始评分（1~10）"
+    )
+    total_score: Optional[float] = Field(default=None, description="加权综合得分（1~10）")
+    rank: Optional[int] = Field(default=None, description="排名（1 为最高）")
+    score_available: bool = Field(..., description="是否有有效评分")
+
+
 # ============================================================================
 # 任务完整结果（第三阶段：包含相似度、冲突、综合建议）
 # ============================================================================
@@ -147,5 +159,8 @@ class TaskResultResponse(BaseModel):
     outputs: list[AgentOutputResponse] = Field(default_factory=list, description="Agent 输出结果列表")
     similarities: list[SimilarityResultResponse] = Field(default_factory=list, description="相似度检测结果")
     conflicts: list[ConflictResultResponse] = Field(default_factory=list, description="冲突检测结果")
+    weighted_ranking: list[WeightedRankingItem] = Field(
+        default_factory=list, description="加权综合得分排名"
+    )
 
     model_config = ConfigDict(from_attributes=True)

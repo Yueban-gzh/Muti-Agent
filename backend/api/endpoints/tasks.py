@@ -15,25 +15,19 @@ from sqlalchemy.orm import selectinload
 
 from ai.agent_core import process_task_background
 from ai.prompt_builder import build_agent_prompt, build_default_weight_config
+from ai.scoring_core import calculate_weighted_ranking
 from api.dependencies import get_current_user
 from db.database import get_db
-from db.models import (
-    User,
-    DecisionTask,
-    TaskAgent,
-    AgentOutput,
-    SimilarityResult,
-    ConflictResult,
-)
+from db.models import User, DecisionTask
 from schemas.task import (
     TaskCreate,
     TaskResponse,
     TaskStatusResponse,
-    TaskResultResponse,
     AgentConfigResponse,
     AgentOutputResponse,
     SimilarityResultResponse,
     ConflictResultResponse,
+    WeightedRankingItem,
 )
 
 # ============================================================================
@@ -237,6 +231,15 @@ async def get_task_result(
         ConflictResultResponse.model_validate(c) for c in task.conflict_results
     ]
 
+    weighted_ranking = calculate_weighted_ranking(
+        task.agent_outputs,
+        agent_name_map,
+        task.weight_config,
+    )
+    ranking_responses = [
+        WeightedRankingItem.model_validate(item) for item in weighted_ranking
+    ]
+
     # --- 构建 Agent 配置列表 ---
     agent_responses = [
         AgentConfigResponse.model_validate(agent) for agent in task.task_agents
@@ -256,4 +259,5 @@ async def get_task_result(
         "outputs": output_responses,
         "similarities": similarity_responses,
         "conflicts": conflict_responses,
+        "weighted_ranking": ranking_responses,
     }

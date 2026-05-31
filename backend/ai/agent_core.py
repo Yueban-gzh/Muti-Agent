@@ -1,9 +1,9 @@
 """
 AI 核心模块
 ----------
-负责与外部大模型（DeepSeek）通信，实现多 Agent 的异步并发调用。
+负责与大模型通信，实现多 Agent 的异步并发调用。
 包含后台任务的主处理函数，串联完整的分析流水线：
-  1. 并发 Agent 调用 → 2. 相似度计算 → 3. 冲突检测 → 4. 综合建议生成
+  1. 并发 Agent 调用 → 2. 相似度 → 3. 冲突检测 → 4. 加权排名 → 5. 综合建议
 """
 
 import asyncio
@@ -13,20 +13,13 @@ import re
 import traceback
 from typing import Optional
 
-import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.conflict_core import detect_conflicts
+from ai.llm.chat import llm_chat
+from ai.scoring_core import calculate_weighted_ranking
 from ai.similarity_core import calculate_similarities
 from ai.summary_core import generate_final_summary
-from core.config import (
-    DEEPSEEK_API_KEY,
-    DEEPSEEK_BASE_URL,
-    DEEPSEEK_MODEL,
-    DEEPSEEK_TIMEOUT,
-    DEEPSEEK_MAX_RETRIES,
-)
 from db.database import AsyncSessionLocal
 from db.models import (
     DecisionTask,
@@ -98,74 +91,35 @@ def _extract_score_json(output_text: str) -> Optional[str]:
 async def generate_single_agent_response(
     system_prompt: str,
     user_question: str,
-    api_key: str = DEEPSEEK_API_KEY,
-    model: str = DEEPSEEK_MODEL,
 ) -> dict:
     """
-    调用 DeepSeek API，使用给定的 System Prompt 生成单个 Agent 的回答。
-    支持自动重试机制。
+    调用大模型，使用给定的 System Prompt 生成单个 Agent 的回答。
+    后端由 os.env 中 LLM_BACKEND 决定（local / api）。
     """
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    user_message = f"请分析以下决策问题：\n{user_question}"
+    result = await llm_chat(
+        system_prompt,
+        user_message,
+        temperature=0.7,
+        max_new_tokens=2048,
+    )
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"请分析以下决策问题：\n{user_question}"},
-        ],
-        "temperature": 0.7,
-        "max_tokens": 4096,
-        "stream": False,
-    }
-
-    api_url = f"{DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
-    last_error = None
-
-    for attempt in range(1 + DEEPSEEK_MAX_RETRIES):
-        try:
-            async with httpx.AsyncClient(timeout=DEEPSEEK_TIMEOUT, trust_env=False) as client:
-                logger.info(f"调用 DeepSeek API（第 {attempt + 1} 次尝试）...")
-                response = await client.post(api_url, json=payload, headers=headers)
-
-                if response.status_code == 200:
-                    data = response.json()
-                    output_text = data["choices"][0]["message"]["content"]
-                    score_json = _extract_score_json(output_text)
-                    logger.info(f"API 调用成功，回复长度: {len(output_text)} 字符")
-                    return {
-                        "success": True,
-                        "output_text": output_text,
-                        "score_json": score_json,
-                        "error": None,
-                    }
-                else:
-                    error_detail = response.text
-                    logger.warning(f"API 返回非 200（{response.status_code}）: {error_detail[:300]}")
-                    last_error = f"HTTP {response.status_code}: {error_detail[:500]}"
-                    if 400 <= response.status_code < 500:
-                        break
-
-        except httpx.TimeoutException:
-            last_error = f"请求超时（{DEEPSEEK_TIMEOUT}秒）"
-            logger.warning(f"第 {attempt + 1} 次调用超时")
-        except httpx.ConnectError as e:
-            last_error = f"连接失败: {str(e)}"
-            logger.warning(f"第 {attempt + 1} 次连接失败")
-        except Exception as e:
-            last_error = f"未知异常: {str(e)}"
-            logger.error(f"第 {attempt + 1} 次调用发生异常: {traceback.format_exc()}")
-
-        if attempt < DEEPSEEK_MAX_RETRIES:
-            await asyncio.sleep(2 ** attempt)
+    if result["success"] and result["text"]:
+        output_text = result["text"]
+        score_json = _extract_score_json(output_text)
+        logger.info("Agent 生成成功，回复长度: %d 字符", len(output_text))
+        return {
+            "success": True,
+            "output_text": output_text,
+            "score_json": score_json,
+            "error": None,
+        }
 
     return {
         "success": False,
         "output_text": None,
         "score_json": None,
-        "error": last_error or "未知错误",
+        "error": result.get("error") or "未知错误",
     }
 
 
@@ -288,7 +242,7 @@ async def process_task_background(task_id: int) -> None:
             # =============================================================
             if fail_count == len(agent_results):
                 task.status = "failed"
-                task.error_message = "所有 Agent 调用均失败，请检查 API 配置或网络连接"
+                task.error_message = "所有 Agent 调用均失败，请检查 LLM 配置或模型路径"
                 await db.commit()
                 logger.error(f"[任务 {task_id}] 全部 Agent 失败")
                 return
@@ -344,7 +298,25 @@ async def process_task_background(task_id: int) -> None:
                 conflict_results = []
 
             # =============================================================
-            # 步骤 8: 综合建议生成 + 更新 DecisionTask
+            # 步骤 8: 加权评分排名
+            # =============================================================
+            logger.info(f"[任务 {task_id}] 开始加权评分排名...")
+            try:
+                weighted_ranking = calculate_weighted_ranking(
+                    saved_outputs,
+                    agent_name_map,
+                    task.weight_config,
+                )
+                logger.info(
+                    f"[任务 {task_id}] 加权排名完成: "
+                    f"{sum(1 for r in weighted_ranking if r['score_available'])} 个有效评分"
+                )
+            except Exception as e:
+                logger.error(f"[任务 {task_id}] 加权排名异常: {traceback.format_exc()}")
+                weighted_ranking = []
+
+            # =============================================================
+            # 步骤 9: 综合建议生成 + 更新 DecisionTask
             # =============================================================
             logger.info(f"[任务 {task_id}] 开始生成综合建议...")
             try:
@@ -356,6 +328,7 @@ async def process_task_background(task_id: int) -> None:
                     conflicts=conflict_results,
                     weight_config=task.weight_config,
                     agent_name_map=agent_name_map,
+                    weighted_ranking=weighted_ranking,
                 )
 
                 if summary_result["success"] and summary_result["summary_text"]:
@@ -374,7 +347,7 @@ async def process_task_background(task_id: int) -> None:
                 task.final_summary = f"综合建议生成过程中发生异常: {str(e)[:500]}"
 
             # =============================================================
-            # 步骤 9: 标记任务完成
+            # 步骤 10: 标记任务完成
             # =============================================================
             task.status = "completed"
             if fail_count > 0:

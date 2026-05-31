@@ -14,15 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.dependencies import get_current_user
+from ai.constants import ALL_DIMENSIONS, DECISION_MODE_LABELS, DIMENSION_NAME_MAP
+from ai.scoring_core import calculate_weighted_ranking
 from db.database import get_db
-from db.models import (
-    User,
-    DecisionTask,
-    TaskAgent,
-    AgentOutput,
-    SimilarityResult,
-    ConflictResult,
-)
+from db.models import User, DecisionTask
 
 # ============================================================================
 # 路由初始化
@@ -141,12 +136,7 @@ async def export_report(
     lines.append("")
 
     # 决策模式中文映射
-    mode_map = {
-        "multi_angle": "多角度分析",
-        "debate": "正反辩论",
-        "expert_consult": "专家会诊",
-        "risk_review": "风险评审",
-    }
+    mode_map = DECISION_MODE_LABELS
 
     # 基本信息
     lines.append("## 一、决策问题")
@@ -222,19 +212,50 @@ async def export_report(
         lines.append("> 未进行相似度分析或无有效数据。")
         lines.append("")
 
+    # 加权综合得分排名
+    lines.append("---")
+    lines.append("")
+    lines.append("## 五、加权综合得分排名")
+    lines.append("")
+
+    ranking = calculate_weighted_ranking(
+        task.agent_outputs,
+        agent_name_map,
+        task.weight_config,
+    )
+    scored = [r for r in ranking if r.get("score_available")]
+
+    if scored:
+        lines.append("| 排名 | Agent | 综合得分 |")
+        lines.append("|------|-------|---------|")
+        for item in scored:
+            lines.append(
+                f"| {item['rank']} | {item['agent_name']} | {item['total_score']:.2f}/10 |"
+            )
+        lines.append("")
+        lines.append("### 六维评分明细")
+        lines.append("")
+        dim_headers = " | ".join(DIMENSION_NAME_MAP[dim] for dim in ALL_DIMENSIONS)
+        lines.append(f"| Agent | {dim_headers} |")
+        lines.append("|-------|" + "|".join(["------"] * len(ALL_DIMENSIONS)) + "|")
+        for item in scored:
+            if item.get("scores"):
+                cells = " | ".join(
+                    f"{item['scores'][dim]:.0f}" for dim in ALL_DIMENSIONS
+                )
+                lines.append(f"| {item['agent_name']} | {cells} |")
+        lines.append("")
+    else:
+        lines.append("> 暂无有效评分数据。")
+        lines.append("")
+
     # 冲突检测
     lines.append("---")
     lines.append("")
-    lines.append("## 五、观点冲突检测")
+    lines.append("## 六、观点冲突检测")
     lines.append("")
 
     high_conflicts = [c for c in task.conflict_results if c.conflict_level == "high"]
-    low_conflicts = [c for c in task.conflict_results if c.conflict_level == "low"]
-
-    dim_name_map = {
-        "benefit": "收益潜力", "cost": "成本可控性", "risk": "风险可控性",
-        "tech": "技术可行性", "exec": "执行可行性", "long_term": "长期价值",
-    }
 
     if task.conflict_results:
         lines.append("### 冲突维度总览")
@@ -242,7 +263,7 @@ async def export_report(
         lines.append("| 维度 | 最高分 | 最低分 | 分差 | 冲突等级 |")
         lines.append("|------|-------|-------|-----|---------|")
         for cr in task.conflict_results:
-            dim_cn = dim_name_map.get(cr.dimension, cr.dimension)
+            dim_cn = DIMENSION_NAME_MAP.get(cr.dimension, cr.dimension)
             diff = cr.max_score - cr.min_score
             level_emoji = "⚠️ 高冲突" if cr.conflict_level == "high" else "✓ 一致"
             lines.append(
@@ -264,7 +285,7 @@ async def export_report(
     # 综合建议
     lines.append("---")
     lines.append("")
-    lines.append("## 六、综合建议")
+    lines.append("## 七、综合建议")
     lines.append("")
 
     if task.final_summary:

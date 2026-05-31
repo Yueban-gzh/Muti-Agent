@@ -40,6 +40,7 @@ Thumbs.db
 
 # 导出的报告
 reports/
+backend/reports/
 reports/exported_reports/
 
 # 日志

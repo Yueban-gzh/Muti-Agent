@@ -24,16 +24,6 @@ _embedding_model: Optional[SentenceTransformer] = None
 # 相似度阈值：>= 此值视为高度相似
 HIGH_SIMILARITY_THRESHOLD = 0.7
 
-# 维度中文名映射
-DIMENSION_NAMES = {
-    "benefit": "收益潜力",
-    "cost": "成本可控性",
-    "risk": "风险可控性",
-    "tech": "技术可行性",
-    "exec": "执行可行性",
-    "long_term": "长期价值",
-}
-
 
 def _get_model() -> SentenceTransformer:
     """
