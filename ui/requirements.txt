@@ -1,0 +1,6 @@
+#仅记录前端所需的 Python 库
+PyQt6>=6.5.0
+matplotlib>=3.5.0
+numpy>=1.21.0
+pandas>=1.3.0
+requests>=2.25.0
