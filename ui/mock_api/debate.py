@@ -1,12 +1,12 @@
 import json
 import random
+import uuid
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 
 _mock_tasks_db: Dict[int, Dict] = {}
 _task_counter = 1
 
-# 默认权重（与文档一致）
 DEFAULT_WEIGHTS = {
     "benefit": 0.2,
     "cost": 0.2,
@@ -85,7 +85,11 @@ def get_task_status(task_id: int) -> Optional[Dict[str, Any]]:
     task = _mock_tasks_db.get(task_id)
     if not task:
         return None
-    return {"task_id": task_id, "status": task["status"]}
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "error_message": task.get("error_message")
+    }
 
 def get_task_result(task_id: int) -> Optional[Dict[str, Any]]:
     task = _mock_tasks_db.get(task_id)
@@ -105,9 +109,9 @@ def get_task_result(task_id: int) -> Optional[Dict[str, Any]]:
             "id": idx,
             "task_id": task_id,
             "agent_name": agent["agent_name"],
-            "role_description": agent["role_description"],
-            "focus_area": agent["focus_area"],
-            "tone": agent["tone"],
+            "role_description": agent.get("role_description", ""),
+            "focus_area": agent.get("focus_area", ""),
+            "tone": agent.get("tone", ""),
             "final_prompt": f"你是{agent['agent_name']}，请分析问题"
         })
         score_json = _generate_score_json()
@@ -121,10 +125,9 @@ def get_task_result(task_id: int) -> Optional[Dict[str, Any]]:
             "created_at": _utcnow_iso()
         })
 
-    # 加权排名
     weighted_ranking = _calculate_weighted_ranking(outputs, task.get("weight_config"))
 
-    # 相似度矩阵（随机生成，仅当 Agent >=2）
+    # 相似度矩阵
     similarities = []
     agent_ids = [a["id"] for a in agents]
     if len(agent_ids) >= 2:
@@ -141,11 +144,11 @@ def get_task_result(task_id: int) -> Optional[Dict[str, Any]]:
                     "created_at": _utcnow_iso()
                 })
 
-    # 冲突检测（随机生成）
+    # 冲突检测
     conflicts = []
     dims = list(DEFAULT_WEIGHTS.keys())
     for dim in dims:
-        if random.random() > 0.6:  # 约40%概率生成冲突
+        if random.random() > 0.6:
             max_score = random.randint(7, 10)
             min_score = random.randint(1, 4)
             conflicts.append({

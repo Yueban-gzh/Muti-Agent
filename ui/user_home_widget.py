@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QMessageBox, QComboBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtCore import QTimer
+from ui.config import USE_REAL_API
 
 class UserHomeWidget(QWidget):
     def __init__(self, user_info, api_client, stack, result_widget):
@@ -101,7 +102,7 @@ class UserHomeWidget(QWidget):
             group.setLayout(form)
             self.agent_layout.addWidget(group)
             self.agent_inputs.append({
-                "name": name_edit,
+                "agent": name_edit,
                 "role": role_edit,
                 "focus": focus_edit,
                 "tone": tone_edit,
@@ -117,55 +118,47 @@ class UserHomeWidget(QWidget):
             QMessageBox.warning(self, "错误", "请输入决策问题")
             return
 
-        mode_map = {
-            "多角度分析": "multi_angle",
-            "正反辩论": "debate",
-            "专家会诊": "expert_consult",
-            "风险评审": "risk_review"
-        }
-        decision_mode = mode_map[self.mode_combo.currentText()]
-
-        agents = []
-        for idx, inp in enumerate(self.agent_inputs):
-            name = inp["name"].text().strip()
-            role = inp["role"].text().strip()
-            focus = inp["focus"].text().strip()
-            tone = inp["tone"].text().strip()
-            if not name:
-                QMessageBox.warning(self, "错误", f"智能体 {idx+1} 的名称不能为空")
-                return
-            agents.append({
-                "agent_name": name,
-                "role_description": role,
-                "focus_area": focus,
-                "tone": tone
+        # ... 构建 payload 的代码不变 ...
+        agents_list = []
+        for inp in self.agent_inputs:
+            agents_list.append({
+                "agent_name": inp["agent"].text().strip(),
+                "role": inp["role"].text().strip(),
+                "focus": inp["focus"].text().strip(),
+                "tone": inp["tone"].text().strip()
             })
 
         payload = {
             "question": question,
-            "decision_mode": decision_mode,
-            "agent_count": len(agents),
-            "agents": agents
+            "decision_mode": self.mode_combo.currentText(),
+            "agent_count": len(agents_list),
+            "agents": agents_list
         }
-
-        # 禁用按钮，改为“分析中...”
+        # 禁用按钮，显示分析中
         self.submit_btn.setEnabled(False)
         self.submit_btn.setText("分析中...")
         self._submitting = True
 
-    # 可选：显示加载提示标签（需先在 init_ui 中创建 self.loading_label）
-        if hasattr(self, 'loading_label'):
-            self.loading_label.setText("任务已提交，AI 分析中（约需1-2分钟）...")
-            self.loading_label.setVisible(True)
-
         result = self.api.start_debate(payload)
-        if result and result.get("task_id"):
-            task_id = result["task_id"]
-            self.poll_task_result(task_id)
-        else:
+        if not result or not result.get("task_id"):
             self._reset_submit_button()
             QMessageBox.warning(self, "错误", "创建任务失败")
+            return
 
+        task_id = result["task_id"]
+
+        if USE_REAL_API:
+            # 真实后端：启动轮询
+            self.poll_task_result(task_id)
+        else:
+            # Mock 模式：任务已经同步完成，直接获取结果
+            final_result = self.api.get_debate_result(task_id)
+            if final_result:
+                self.result_widget.load_result(task_id, final_result)
+                self.stack.setCurrentWidget(self.result_widget)
+            else:
+                QMessageBox.warning(self, "错误", "获取任务结果失败")
+            self._reset_submit_button()
     def poll_task_result(self, task_id):
         """开始轮询任务状态，每2秒检查一次，不设超时"""
         self.poll_timer = QTimer()

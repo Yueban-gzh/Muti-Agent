@@ -20,7 +20,14 @@ class UserHistoryWidget(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["任务ID", "决策问题", "创建时间", "查看详情"])
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header = self.table.horizontalHeader()
+    # 设置各列宽度模式
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # 任务ID
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)           # 决策问题
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # 创建时间
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)             # 查看详情
+        self.table.setColumnWidth(3, 100)  # 固定宽度 100 像素
+
         layout.addWidget(self.table)
         self.setLayout(layout)
 
@@ -32,17 +39,47 @@ class UserHistoryWidget(QWidget):
         tasks = self.api.get_my_history()
         self.table.setRowCount(len(tasks))
         for row, task in enumerate(tasks):
-            self.table.setItem(row, 0, QTableWidgetItem(str(task["task_id"])))
+            # 使用 "id" 而不是 "task_id"
+            self.table.setItem(row, 0, QTableWidgetItem(str(task["id"])))
             self.table.setItem(row, 1, QTableWidgetItem(task["question"]))
             self.table.setItem(row, 2, QTableWidgetItem(task["created_at"]))
             btn = QPushButton("查看结果")
+            btn.setStyleSheet("""
+            QPushButton {
+                font-size: 12px;
+                font-weight: bold;
+                color: #0f172a;
+                background-color: #94a3b8;
+                border: 1px solid #94a3b8;  /* 这里可以改成更细，比如 1px 或 0.5px */
+                border-radius: 5px;          /* 可以改小圆角 */
+                padding: 4px 8px;            /* 内边距调整 */
+            }
+            QPushButton:hover {
+                background-color: #e4b35f;
+                border-color: #f59e0b;
+                color: #000000;
+            }
+            QPushButton:pressed {
+                background-color: #b45309;
+                border-color: #b45309;
+            }
+            QPushButton:disabled {
+                background-color: #475569;
+                border-color: #475569;
+                color: #94a3b8;
+            }
+           """)    
+            btn.setMinimumWidth(80)
+            btn.setMinimumHeight(24)
             btn.clicked.connect(lambda checked, t=task: self.view_result(t))
             self.table.setCellWidget(row, 3, btn)
 
     def view_result(self, task):
-        task_detail = self.api.get_debate_result(task["task_id"])
+        # 使用 "id" 而不是 "task_id"
+        task_detail = self.api.get_debate_result(task["id"])
         if task_detail:
-            self.result_widget.load_history_result(task["task_id"], task_detail, show_export=True)
+            self.result_widget.load_history_result(task["id"], task_detail, show_export=True)
             self.stack.setCurrentWidget(self.result_widget)
         else:
             QMessageBox.warning(self, "错误", "无法获取该任务的结果")
+    

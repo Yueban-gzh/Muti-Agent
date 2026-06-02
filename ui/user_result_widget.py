@@ -27,7 +27,7 @@ class UserResultWidget(QWidget):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
-        self.export_btn = QPushButton("📄 导出报告")
+        self.export_btn = QPushButton("导出报告")
         self.export_btn.clicked.connect(self.export_report)
         self.export_btn.setVisible(False)
         layout.addWidget(self.export_btn, alignment=Qt.AlignmentFlag.AlignRight)
@@ -136,6 +136,8 @@ class UserResultWidget(QWidget):
         table.setColumnCount(len(dimensions))
         table.setHorizontalHeaderLabels(dim_names)
         table.setVerticalHeaderLabels([out["agent_name"] for out in outputs])
+        table.setAlternatingRowColors(True)
+
 
         for i, out in enumerate(outputs):
             score_dict = json.loads(out.get("score_json", "{}"))
@@ -210,6 +212,7 @@ class UserResultWidget(QWidget):
         table.setRowCount(len(ranking))
         table.setColumnCount(4)
         table.setHorizontalHeaderLabels(["排名", "专家名称", "综合得分", "评分可用"])
+        table.setAlternatingRowColors(True)
         for row, item in enumerate(ranking):
             table.setItem(row, 0, QTableWidgetItem(str(item.get("rank", "-"))))
             table.setItem(row, 1, QTableWidgetItem(item["agent_name"]))

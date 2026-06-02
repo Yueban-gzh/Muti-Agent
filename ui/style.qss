@@ -1,0 +1,167 @@
+/* ========== 全局基础（暗金奢华但清晰） ========== */
+QWidget {
+    color: #e2e8f0;
+    font-family: "SF Pro Display", "-apple-system", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+}
+
+/* 修复：精准控制主窗口背景，不再使用 QWidget 污染子控件 */
+QMainWindow, QDialog, QWidget {
+    background-color: #1e293b;
+}
+
+/* ========== 右侧容器（保留层次） ========== */
+#right_panel {
+    background-color: #0f172a;
+    border-top-right-radius: 16px;
+    border-bottom-right-radius: 16px;
+}
+
+/* ========== 标题文字 ========== */
+QLabel#welcome_label {
+    font-size: 26px; 
+    font-weight: bold; 
+    color: #ffffff; 
+    margin-bottom: 2px;
+    background: transparent;
+}
+QLabel#sub_label {
+    color: #94a3b8; 
+    font-size: 12px; 
+    margin-bottom: 15px;
+    background: transparent;
+}
+
+/* ========== 表单标签 ========== */
+QLabel {
+    color: #cbd5e1;
+    font-weight: bold;
+    font-size: 12px;
+    background: transparent;
+    padding-left: 2px;
+}
+
+/* ========== 输入框：深邃黑金 ========== */
+QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+    background-color: #0f172a;
+    border: 1px solid #334155; 
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: #f1f5f9;
+    selection-background-color: #b89a6a;
+    selection-color: #0f172a;
+}
+QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+    border: 1px solid #d97706;
+    background-color: #1e293b;
+}
+
+/* ========== 选项卡：金边指示线 ========== */
+QTabWidget {
+    background: transparent;
+}
+QTabWidget::pane {
+    background: transparent;
+    border: none; 
+}
+#login_tab, #register_tab {
+    background: transparent;
+}
+QTabBar {
+    background: transparent;
+}
+QTabBar::tab {
+    background: transparent;
+    border: none;
+    padding: 8px 16px;
+    margin-right: 15px;
+    font-weight: bold;
+    font-size: 14px;
+    color: #94a3b8;
+    border-bottom: 2px solid transparent;
+}
+QTabBar::tab:selected {
+    color: #fbbf24;
+    border-bottom: 2px solid #fbbf24;
+}
+QTabBar::tab:hover {
+    color: #e2e8f0;
+}
+
+/* ========== 核心按钮：强力修复背景显现 ========== */
+QPushButton {
+    background-color: #94a3b8 ;
+    color: #0f172a ;
+    border: 1px solid #94a3b8; /* 显式指定边框，防止被系统内绘干涉 */
+    border-radius: 8px;
+    padding: 12px 20px;
+    font-weight: bold;
+    font-size: 15px;
+    letter-spacing: 1px;
+}
+QPushButton:hover {
+    background-color: #e4b35f ;
+    border-color: #f59e0b;
+    color: #000000 ;
+}
+QPushButton:pressed {
+    background-color: #b45309 ;
+    border-color: #b45309;
+}
+QPushButton:disabled {
+    background-color: #475569 ;
+    border-color: #475569;
+    color: #94a3b8 ;
+}
+
+/* ========== 表格：深色主题 ========== */
+QTableWidget {
+    background-color: #0f172a;
+    alternate-background-color: #1e293b;
+    gridline-color: #334155;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    color: #e2e8f0;
+}
+QHeaderView::section {
+    background-color: #1e293b;
+    padding: 6px;
+    border: none;
+    border-bottom: 1px solid #334155;
+    font-weight: bold;
+    color: #fbbf24;
+}
+QTableWidget::item {
+    padding: 4px;
+}
+QTableWidget::item:selected {
+    background-color: #b89a6a;
+    color: #0f172a;
+}
+
+/* ========== 消息框（弹窗） ========== */
+QMessageBox {
+    background-color: #1e293b;
+}
+QMessageBox QLabel {
+    color: #e2e8f0;
+}
+QMessageBox QPushButton {
+    background-color: #e2e8f0 ;
+    color: #0f172a ;
+    border: none;
+    min-width: 80px;
+    padding: 6px 12px;
+    border-radius: 6px;
+}
+QMessageBox QPushButton:hover {
+    background-color: #f59e0b ;
+}
+
+QHeaderView::section {
+    background-color: #1e293b;
+    color: #fbbf24;
+    padding: 6px;
+    border: none;
+    border-bottom: 1px solid #334155;
+}
