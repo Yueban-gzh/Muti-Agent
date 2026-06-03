@@ -70,6 +70,14 @@ class TaskRunner:
         logger.info("TaskRunner 已停止")
 
     async def submit(self, task_id: int) -> None:
+        """旧版：创建后自动跑一次性流水线（LEGACY_AUTO_FINALIZE）。"""
+        await self._enqueue(task_id)
+
+    async def submit_finalize(self, task_id: int) -> None:
+        """收束期流水线入队。"""
+        await self._enqueue(task_id)
+
+    async def _enqueue(self, task_id: int) -> None:
         if TASK_QUEUE_MAX_DEPTH > 0 and self.queue_depth >= TASK_QUEUE_MAX_DEPTH:
             raise TaskQueueFullError(
                 f"任务队列已满（{TASK_QUEUE_MAX_DEPTH}），请稍后重试"
@@ -78,25 +86,35 @@ class TaskRunner:
         logger.info("任务 %d 已入队 queue_depth=%d", task_id, self.queue_depth)
 
     async def recover_stale_tasks(self) -> int:
-        """启动时将 processing 重置为 pending 并重新入队。"""
+        """启动时恢复 processing / finalizing 中断任务。"""
+        recovered = 0
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
+            proc = await db.execute(
                 select(DecisionTask.id).where(DecisionTask.status == "processing")
             )
-            stale_ids = list(result.scalars().all())
+            proc_ids = list(proc.scalars().all())
+            fin = await db.execute(
+                select(DecisionTask.id).where(DecisionTask.status == "finalizing")
+            )
+            fin_ids = list(fin.scalars().all())
 
-        for task_id in stale_ids:
+        for task_id in proc_ids:
             async with AsyncSessionLocal() as db:
                 task = await db.get(DecisionTask, task_id)
                 if task and task.status == "processing":
                     task.status = "pending"
                     task.error_message = None
                     await db.commit()
-            await self.submit(task_id)
+            await self._enqueue(task_id)
+            recovered += 1
 
-        if stale_ids:
-            logger.info("已恢复 %d 个中断任务", len(stale_ids))
-        return len(stale_ids)
+        for task_id in fin_ids:
+            await self._enqueue(task_id)
+            recovered += 1
+
+        if recovered:
+            logger.info("已恢复 %d 个中断任务", recovered)
+        return recovered
 
     async def _worker_loop(self) -> None:
         while not self._shutdown:

@@ -616,6 +616,7 @@ Agent 推荐、冲突检测、模板管理、日志查看、雷达图/相似度�
 
 ## 16. 相关文档
 
+- [交流期 → 收束期 设计与实现说明](./design-discussion-finalize.md)（**v1.3**，后端+CLI 已实现）  
 - [团队分工](./团队分工.md)  
 - [接口约定](./api_contract.md)  
 - [README](../README.md)

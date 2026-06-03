@@ -20,9 +20,15 @@
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|------|------|
-| POST | `/api/tasks/create` | 用户 | 创建任务 + 触发后台 AI 分析流水线 |
-| GET | `/api/tasks/{task_id}/status` | 用户 | 轮询任务状态（pending→processing→completed/failed） |
-| GET | `/api/tasks/{task_id}/result` | 用户 | 获取完整结果（Agent 输出 + 相似度 + 冲突 + 综合建议） |
+| POST | `/api/tasks/create` | 用户 | 创建任务，默认进入 `discussing` 讨论室 |
+| POST | `/api/tasks/{task_id}/messages` | 用户 | 讨论期发送消息并触发 Agent 回复 |
+| GET | `/api/tasks/{task_id}/messages` | 用户 | 讨论消息时间线 |
+| GET | `/api/tasks/{task_id}/debate-roster` | 用户 | 辩论辩手席位（含 `stance` / `stance_label`） |
+| POST | `/api/tasks/{task_id}/debate/agent-exchange` | 用户 | 用户不发言，辩手自主交锋一轮（支持→反对→评审） |
+| POST | `/api/tasks/{task_id}/finalize` | 用户 | 结束讨论 → LLM 纪要 → 正式报告（`finalizing`→`completed`） |
+| GET | `/api/tasks/{task_id}/status` | 用户 | 轮询状态（discussing/finalizing/completed/failed） |
+| GET | `/api/tasks/{task_id}/result` | 用户 | 讨论中返回 messages；完成后含 outputs、相似度、冲突、综合建议 |
+| POST | `/api/templates/recommend` | 用户 | 按问题关键词推荐 Agent 组合 |
 
 ### 用户反馈 (`/api/feedback`)
 
@@ -58,6 +64,20 @@
 | PUT | `/api/admin/templates/{template_id}` | 更新模板 |
 | DELETE | `/api/admin/templates/{template_id}` | 删除模板 |
 | GET | `/api/admin/logs` | 操作日志查询（支持 event_type 筛选） |
+
+### 操作日志 event_type 枚举
+
+| event_type | 说明 |
+|------------|------|
+| `user.register` | 用户注册 |
+| `user.login` | 用户登录 |
+| `task.create` | 创建决策任务 |
+| `task.processing` | 任务开始 AI 分析 |
+| `task.completed` | 任务分析完成 |
+| `task.failed` | 任务失败或流水线异常 |
+| `agent.all_failed` | 全部 Agent 调用失败 |
+| `feedback.vote` | 用户提交采纳反馈 |
+| `llm.load_failed` | 本地模型启动加载失败 |
 
 ---
 
@@ -187,6 +207,35 @@
 }
 ```
 
+### GET `/api/admin/stats`
+
+管理员全局看板。在原有用户/任务/反馈/模板统计基础上，追加运行时调度指标：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `task_queue_depth` | int | 任务队列中等待执行的任务数 |
+| `pipeline_active` | int | 当前正在执行的流水线数 |
+| `pipeline_max` | int | 流水线并发上限（`MAX_CONCURRENT_PIPELINES`） |
+| `llm_active` | int | 当前占用 LLM 槽位的请求数 |
+| `llm_max` | int | LLM 并发槽位上限（`LLM_MAX_CONCURRENT`） |
+| `llm_available_slots` | int | LLM 剩余可用槽位数 |
+
+```json
+{
+  "total_users": 10,
+  "total_tasks": 25,
+  "completed_tasks": 20,
+  "failed_tasks": 1,
+  "pending_tasks": 4,
+  "task_queue_depth": 2,
+  "pipeline_active": 1,
+  "pipeline_max": 3,
+  "llm_active": 1,
+  "llm_max": 2,
+  "llm_available_slots": 1
+}
+```
+
 ---
 
 ## 决策模式枚举
@@ -194,7 +243,19 @@
 | 值 | 名称 | 说明 |
 |----|------|------|
 | `multi_angle` | 多角度分析 | 各 Agent 从自身角度独立分析 |
-| `debate` | 正反辩论 | Agent 分为支持方和反对方 |
+| `debate` | 正反辩论 | 创建时**必须为每位辩手指定** `stance`（`pro`/`con`/`judge`）；至少 1 正方 + 1 反方；模板 `default_stance` 仅作推荐提示 |
+
+### 辩论模式交互要点
+
+| 阶段 | 行为 |
+|------|------|
+| 创建任务 | 每个 `agents[]` 项必填 `stance`：`pro`（支持方）、`con`（反对方）、`judge`（评审，最多 1 人） |
+| 推荐组合 | `POST /api/templates/recommend` 在 `debate` 下返回 `suggested_stance`，**不**自动写入 `stance` |
+| 用户发言 | 非辩论：`reply_scope=all_brief`（全体各一条）；辩论：`debate_round`（或 `all_brief` 自动转换）。**不支持**指定单个 Agent/单方 |
+| 用户不发言 | `POST .../debate/agent-exchange`：辩手基于已有记录再交锋一轮；`debate_exchange_rounds` 计数 |
+| 结束 | `POST .../finalize` |
+
+`GET /api/tasks/{id}/status` 在辩论任务中额外返回 `debate_exchange_rounds`（已完成的辩手自主交锋轮数）。
 | `expert_consult` | 专家会诊 | 不同领域专家联合诊断 |
 | `risk_review` | 风险评审 | 重点分析失败风险和应对 |
 
@@ -222,6 +283,10 @@
 ## 任务状态流转
 
 ```
+discussing → finalizing → completed
+          → failed
+
+# 兼容旧路径（LEGACY_AUTO_FINALIZE=1）
 pending → processing → completed
                      → failed
 ```

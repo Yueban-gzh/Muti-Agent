@@ -6,6 +6,8 @@ USER_LOGIN = "user.login"
 
 # 任务生命周期
 TASK_CREATE = "task.create"
+TASK_DISCUSS_MESSAGE = "task.discuss.message"
+TASK_FINALIZE_START = "task.finalize.start"
 TASK_PROCESSING = "task.processing"
 TASK_COMPLETED = "task.completed"
 TASK_FAILED = "task.failed"

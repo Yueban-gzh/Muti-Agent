@@ -11,7 +11,7 @@ import asyncio
 import logging
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -72,19 +72,33 @@ def _ensure_loaded() -> None:
         )
 
 
+def _build_messages(
+    system_prompt: str,
+    user_message: str,
+    history: Sequence[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    if history:
+        for item in history:
+            role = item.get("role")
+            content = item.get("content")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
 def _sync_generate(
     system_prompt: str,
     user_message: str,
     temperature: float,
     max_new_tokens: int,
+    history: Sequence[dict[str, str]] | None = None,
 ) -> str:
     _ensure_loaded()
     assert _tokenizer is not None and _model is not None
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
+    messages = _build_messages(system_prompt, user_message, history)
     prompt = _tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
@@ -112,6 +126,7 @@ async def chat_completion(
     *,
     temperature: Optional[float] = None,
     max_new_tokens: Optional[int] = None,
+    history: Sequence[dict[str, str]] | None = None,
 ) -> dict:
     """
     异步调用本地模型生成回复。
@@ -129,6 +144,7 @@ async def chat_completion(
             user_message,
             temp,
             max_tokens,
+            history,
         )
         logger.info("本地生成完成，长度 %d 字符", len(text))
         return {"success": True, "text": text, "error": None}

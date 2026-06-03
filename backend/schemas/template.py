@@ -45,6 +45,10 @@ class TemplateResponse(BaseModel):
     role_description: Optional[str] = Field(default=None, description="角色/专业背景")
     focus_area: Optional[str] = Field(default=None, description="关注领域")
     tone: Optional[str] = Field(default=None, description="输出风格")
+    default_stance: Optional[str] = Field(default=None, description="辩论默认立场")
+    recommended_modes: Optional[str] = Field(default=None, description="适用模式 JSON")
+    sort_order: int = Field(default=0, description="排序")
+    display_alias: Optional[str] = Field(default=None, description="展示别名")
     is_active: int = Field(..., description="是否启用")
     created_at: datetime = Field(..., description="创建时间")
 

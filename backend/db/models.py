@@ -39,16 +39,33 @@ class DecisionTask(Base):
     decision_mode = Column(String(30), nullable=False, comment="决策模式")
     agent_count = Column(Integer, nullable=False, comment="Agent 数量")
     weight_config = Column(Text, nullable=True, comment="用户权重配置 JSON")
-    status = Column(String(20), nullable=False, default="pending", comment="任务状态")
+    status = Column(String(20), nullable=False, default="discussing", comment="任务状态")
     error_message = Column(Text, nullable=True, comment="错误信息")
 
     # 第三阶段新增：综合建议
     final_summary = Column(Text, nullable=True, comment="大模型生成的综合建议")
 
+    # 交流期 → 收束期
+    context_notes = Column(Text, nullable=True, comment="任务背景说明")
+    discussion_turns = Column(Integer, nullable=False, default=0, comment="用户发言轮次")
+    debate_exchange_rounds = Column(
+        Integer, nullable=False, default=0, comment="辩手自主交锋轮次（用户未发言）"
+    )
+    discussion_summary = Column(Text, nullable=True, comment="讨论纪要")
+    summary_method = Column(String(20), nullable=True, comment="纪要生成方式 llm/rule_fallback")
+    finalized_at = Column(DateTime(timezone=True), nullable=True, comment="收束完成时间")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, comment="任务创建时间")
 
     # 关联关系
     user = relationship("User", back_populates="decision_tasks")
+    discussion_messages = relationship(
+        "DiscussionMessage",
+        back_populates="task",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="DiscussionMessage.seq",  # noqa: RUF100
+    )
     task_agents = relationship("TaskAgent", back_populates="task", lazy="selectin", cascade="all, delete-orphan")
     agent_outputs = relationship("AgentOutput", back_populates="task", lazy="selectin", cascade="all, delete-orphan")
     similarity_results = relationship("SimilarityResult", back_populates="task", lazy="selectin", cascade="all, delete-orphan")
@@ -69,7 +86,11 @@ class TaskAgent(Base):
     role_description = Column(Text, nullable=True, comment="角色/专业背景描述")
     focus_area = Column(Text, nullable=True, comment="关注领域")
     tone = Column(String(50), nullable=True, comment="输出风格")
-    final_prompt = Column(Text, nullable=False, comment="最终 System Prompt")
+    final_prompt = Column(Text, nullable=False, comment="收束期 System Prompt")
+    stance = Column(String(20), nullable=True, comment="辩论立场 pro/con/neutral/judge")
+    template_id = Column(Integer, ForeignKey("agent_templates.id", ondelete="SET NULL"), nullable=True)
+    extra_notes = Column(Text, nullable=True, comment="用户本案补充")
+    sort_order = Column(Integer, nullable=False, default=0, comment="展示排序")
 
     task = relationship("DecisionTask", back_populates="task_agents")
     agent_outputs = relationship("AgentOutput", back_populates="task_agent", lazy="selectin", cascade="all, delete-orphan")
@@ -87,6 +108,8 @@ class AgentOutput(Base):
     task_agent_id = Column(Integer, ForeignKey("task_agents.id", ondelete="CASCADE"), nullable=False, comment="所属 Agent 配置 ID")
     output_text = Column(Text, nullable=True, comment="Agent 分析文本")
     score_json = Column(Text, nullable=True, comment="六维评分 JSON")
+    phase = Column(String(20), nullable=False, default="final", comment="输出阶段 final")
+    round = Column(Integer, nullable=False, default=1, comment="轮次")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, comment="输出生成时间")
 
     task = relationship("DecisionTask", back_populates="agent_outputs")
@@ -222,6 +245,10 @@ class AgentTemplate(Base):
     focus_area = Column(Text, nullable=True, comment="关注领域")
     tone = Column(String(50), nullable=True, comment="输出风格")
     is_active = Column(Integer, nullable=False, default=1, comment="是否启用（1=启用，0=禁用）")
+    default_stance = Column(String(20), nullable=True, comment="辩论默认立场")
+    recommended_modes = Column(Text, nullable=True, comment="推荐适用模式 JSON 数组")
+    sort_order = Column(Integer, nullable=False, default=0, comment="排序")
+    display_alias = Column(String(100), nullable=True, comment="展示别名")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, comment="创建时间")
 
     def __repr__(self) -> str:
@@ -248,3 +275,30 @@ class OperationLog(Base):
 
     def __repr__(self) -> str:
         return f"<OperationLog(id={self.id}, type='{self.event_type}')>"
+
+
+class DiscussionMessage(Base):
+    """讨论交流消息表"""
+    __tablename__ = "discussion_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer, ForeignKey("decision_tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    seq = Column(Integer, nullable=False, comment="消息序号")
+    role = Column(String(20), nullable=False, comment="user/agent/system")
+    task_agent_id = Column(
+        Integer, ForeignKey("task_agents.id", ondelete="SET NULL"), nullable=True
+    )
+    target_agent_id = Column(
+        Integer, ForeignKey("task_agents.id", ondelete="SET NULL"), nullable=True
+    )
+    reply_scope = Column(String(30), nullable=True, comment="回复范围")
+    content = Column(Text, nullable=False, comment="消息正文")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    task = relationship("DecisionTask", back_populates="discussion_messages")
+    task_agent = relationship("TaskAgent", foreign_keys=[task_agent_id])
+
+    def __repr__(self) -> str:
+        return f"<DiscussionMessage(id={self.id}, task_id={self.task_id}, seq={self.seq}, role={self.role})>"

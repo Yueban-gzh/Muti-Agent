@@ -141,3 +141,24 @@ LOG_DIR: str = os.getenv("LOG_DIR", os.path.join(PROJECT_ROOT, "logs")).replace(
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE_MAX_MB: int = int(os.getenv("LOG_FILE_MAX_MB", "10"))
 LOG_FILE_BACKUP_COUNT: int = int(os.getenv("LOG_FILE_BACKUP_COUNT", "5"))
+
+# ============================================================================
+# 讨论期 → 收束期
+# ============================================================================
+
+MAX_DISCUSSION_USER_TURNS: int = int(os.getenv("MAX_DISCUSSION_USER_TURNS", "30"))
+MAX_USER_MESSAGE_CHARS: int = int(os.getenv("MAX_USER_MESSAGE_CHARS", "500"))
+DISCUSS_MAX_NEW_TOKENS: int = int(os.getenv("DISCUSS_MAX_NEW_TOKENS", "512"))
+DISCUSS_HISTORY_MAX_MESSAGES: int = int(os.getenv("DISCUSS_HISTORY_MAX_MESSAGES", "12"))
+
+DISCUSSION_SUMMARY_TARGET_CHARS: int = int(os.getenv("DISCUSSION_SUMMARY_TARGET_CHARS", "800"))
+DISCUSSION_SUMMARY_MAX_NEW_TOKENS: int = int(os.getenv("DISCUSSION_SUMMARY_MAX_NEW_TOKENS", "1024"))
+DISCUSS_INPUT_MAX_CHARS: int = int(os.getenv("DISCUSS_INPUT_MAX_CHARS", "12000"))
+SUMMARY_LLM_TEMPERATURE: float = float(os.getenv("SUMMARY_LLM_TEMPERATURE", "0.3"))
+
+DEBATE_REQUIRE_PRO_CON: bool = os.getenv("DEBATE_REQUIRE_PRO_CON", "1").strip() in ("1", "true", "yes")
+DEBATE_MAX_JUDGE: int = int(os.getenv("DEBATE_MAX_JUDGE", "1"))
+MAX_DEBATE_EXCHANGE_ROUNDS: int = int(os.getenv("MAX_DEBATE_EXCHANGE_ROUNDS", "15"))
+
+# 创建任务后自动跑旧版一次性流水线（兼容 CLI 联调）
+LEGACY_AUTO_FINALIZE: bool = os.getenv("LEGACY_AUTO_FINALIZE", "0").strip() in ("1", "true", "yes")

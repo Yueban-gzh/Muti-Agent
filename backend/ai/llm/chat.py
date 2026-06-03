@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from core.config import LLM_BACKEND, LOCAL_MAX_NEW_TOKENS
 
@@ -19,6 +19,7 @@ async def llm_chat(
     max_new_tokens: Optional[int] = None,
     task_id: Optional[int] = None,
     label: str = "",
+    history: Sequence[dict[str, str]] | None = None,
 ) -> dict:
     """
     统一聊天接口。
@@ -33,6 +34,7 @@ async def llm_chat(
                 user_message,
                 temperature=temperature,
                 max_new_tokens=max_new_tokens,
+                history=history,
             )
 
         max_tokens = (

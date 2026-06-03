@@ -48,7 +48,9 @@ async def lifespan(app: FastAPI):
     # --- 启动阶段：初始化数据库表 ---
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # 启用 SQLite WAL 模式以支持更好的并发读写性能
+        from db.migrate import run_schema_migrations
+
+        await conn.run_sync(run_schema_migrations)
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
     print(f"[启动] 数据库表初始化完成（{DATABASE_URL}）")
 
