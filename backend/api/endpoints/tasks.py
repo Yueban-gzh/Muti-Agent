@@ -4,7 +4,8 @@
 薄控制器：HTTP 参数校验与响应，业务逻辑委托 services 层。
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_current_user
@@ -13,7 +14,7 @@ from db.database import get_db
 from db.models import User
 from schemas.task import TaskCreate, TaskResponse, TaskStatusResponse
 from services.exceptions import ServiceError
-from services.pipeline_service import run_task_pipeline
+from services.task_runner import TaskQueueFullError, get_task_runner
 from services.task_service import TaskService
 
 router = APIRouter(prefix="/api/tasks", tags=["决策任务"])
@@ -28,7 +29,6 @@ router = APIRouter(prefix="/api/tasks", tags=["决策任务"])
 )
 async def create_task(
     task_data: TaskCreate,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -37,7 +37,14 @@ async def create_task(
     except ServiceError as exc:
         raise service_error_to_http(exc) from exc
 
-    background_tasks.add_task(run_task_pipeline, task_id=new_task.id)
+    try:
+        await get_task_runner().submit(new_task.id)
+    except TaskQueueFullError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
     return {
         "task_id": new_task.id,
         "status": "pending",

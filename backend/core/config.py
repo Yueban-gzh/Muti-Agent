@@ -111,5 +111,33 @@ _default_model_path = os.path.join(
 LOCAL_MODEL_PATH: str = os.getenv("LOCAL_MODEL_PATH", _default_model_path)
 LOCAL_MAX_NEW_TOKENS: int = int(os.getenv("LOCAL_MAX_NEW_TOKENS", "2048"))
 LOCAL_TEMPERATURE: float = float(os.getenv("LOCAL_TEMPERATURE", "0.7"))
-# 同时进行的本地生成数（3090 上 2 路较稳）
-LOCAL_MAX_CONCURRENT: int = int(os.getenv("LOCAL_MAX_CONCURRENT", "2"))
+
+# ============================================================================
+# 并发控制（任务队列 + 全局 LLM 槽位）
+# ============================================================================
+
+# 全局 LLM 槽位（Agent + 综合建议 + local/api 共用）
+LLM_MAX_CONCURRENT: int = int(os.getenv("LLM_MAX_CONCURRENT", "2"))
+
+# 兼容旧配置名
+_legacy_local = os.getenv("LOCAL_MAX_CONCURRENT")
+if _legacy_local and not os.getenv("LLM_MAX_CONCURRENT"):
+    LLM_MAX_CONCURRENT = int(_legacy_local)
+
+# 同时执行的完整流水线数
+MAX_CONCURRENT_PIPELINES: int = int(os.getenv("MAX_CONCURRENT_PIPELINES", "3"))
+
+# 任务队列上限，0 = 不限制
+TASK_QUEUE_MAX_DEPTH: int = int(os.getenv("TASK_QUEUE_MAX_DEPTH", "0"))
+
+# LOCAL_MAX_CONCURRENT 保留为别名，供旧文档引用
+LOCAL_MAX_CONCURRENT: int = LLM_MAX_CONCURRENT
+
+# ============================================================================
+# 运行日志（文件持久化，见 core/logging_config.py）
+# ============================================================================
+
+LOG_DIR: str = os.getenv("LOG_DIR", os.path.join(PROJECT_ROOT, "logs")).replace("\\", "/")
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FILE_MAX_MB: int = int(os.getenv("LOG_FILE_MAX_MB", "10"))
+LOG_FILE_BACKUP_COUNT: int = int(os.getenv("LOG_FILE_BACKUP_COUNT", "5"))

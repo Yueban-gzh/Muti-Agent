@@ -19,6 +19,8 @@ from schemas.task import (
     WeightedRankingItem,
 )
 from services.exceptions import ServiceError
+from services.log_constants import TASK_CREATE
+from services.log_service import append_log
 from services.repositories.task_repository import (
     get_task_by_id,
     get_task_with_analysis,
@@ -102,6 +104,14 @@ class TaskService:
 
         await db.commit()
         await db.refresh(new_task)
+
+        await append_log(
+            TASK_CREATE,
+            f"创建任务 #{new_task.id}，{new_task.agent_count} 个 Agent，"
+            f"模式={new_task.decision_mode}",
+            user_id=user.id,
+        )
+
         return new_task
 
     @staticmethod

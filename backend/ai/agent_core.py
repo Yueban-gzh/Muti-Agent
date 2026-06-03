@@ -23,6 +23,13 @@ from ai.llm.chat import llm_chat
 from ai.scoring_core import calculate_weighted_ranking
 from ai.similarity_core import calculate_similarities
 from ai.summary_core import generate_final_summary
+from services.log_constants import (
+    AGENT_ALL_FAILED,
+    TASK_COMPLETED,
+    TASK_FAILED,
+    TASK_PROCESSING,
+)
+from services.log_service import append_log
 from db.database import AsyncSessionLocal
 from db.models import (
     DecisionTask,
@@ -37,13 +44,6 @@ from db.models import (
 # ============================================================================
 
 logger = logging.getLogger("agent_core")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(
-        "[%(asctime)s] [%(levelname)s] %(name)s: %(message)s"
-    ))
-    logger.addHandler(handler)
 
 
 # ============================================================================
@@ -94,6 +94,9 @@ def _extract_score_json(output_text: str) -> Optional[str]:
 async def generate_single_agent_response(
     system_prompt: str,
     user_question: str,
+    *,
+    task_id: Optional[int] = None,
+    agent_name: str = "",
 ) -> dict:
     """
     调用大模型，使用给定的 System Prompt 生成单个 Agent 的回答。
@@ -105,6 +108,8 @@ async def generate_single_agent_response(
         user_message,
         temperature=0.7,
         max_new_tokens=2048,
+        task_id=task_id,
+        label=f"agent:{agent_name}" if agent_name else "agent",
     )
 
     if result["success"] and result["text"]:
@@ -146,6 +151,8 @@ async def process_task_background(task_id: int) -> None:
     """
     logger.info(f"[任务 {task_id}] 后台处理流水线启动...")
 
+    task_user_id: Optional[int] = None
+
     async with AsyncSessionLocal() as db:
         try:
             # =============================================================
@@ -160,6 +167,8 @@ async def process_task_background(task_id: int) -> None:
                 logger.error(f"[任务 {task_id}] 任务不存在")
                 return
 
+            task_user_id = task.user_id
+
             agents_result = await db.execute(
                 select(TaskAgent).where(TaskAgent.task_id == task_id)
             )
@@ -170,6 +179,11 @@ async def process_task_background(task_id: int) -> None:
                 task.status = "failed"
                 task.error_message = "没有找到 Agent 配置"
                 await db.commit()
+                await append_log(
+                    TASK_FAILED,
+                    f"任务 {task_id} 失败：未找到 Agent 配置",
+                    user_id=task_user_id,
+                )
                 return
 
             # =============================================================
@@ -178,6 +192,11 @@ async def process_task_background(task_id: int) -> None:
             task.status = "processing"
             await db.commit()
             logger.info(f"[任务 {task_id}] → processing ({len(task_agents)} 个 Agent)")
+            await append_log(
+                TASK_PROCESSING,
+                f"任务 {task_id} 开始 AI 分析（{len(task_agents)} 个 Agent）",
+                user_id=task_user_id,
+            )
 
             # =============================================================
             # 步骤 3: 并发调用所有 Agent
@@ -188,6 +207,8 @@ async def process_task_background(task_id: int) -> None:
                     result_data = await generate_single_agent_response(
                         system_prompt=agent.final_prompt,
                         user_question=task.question,
+                        task_id=task_id,
+                        agent_name=agent.agent_name,
                     )
                     result_data["agent"] = agent
                     logger.info(
@@ -248,6 +269,11 @@ async def process_task_background(task_id: int) -> None:
                 task.error_message = "所有 Agent 调用均失败，请检查 LLM 配置或模型路径"
                 await db.commit()
                 logger.error(f"[任务 {task_id}] 全部 Agent 失败")
+                await append_log(
+                    AGENT_ALL_FAILED,
+                    f"任务 {task_id} 全部 Agent 调用失败（{fail_count}/{len(agent_results)}）",
+                    user_id=task_user_id,
+                )
                 return
 
             # ---- 重新查询 AgentOutput（确保获取到完整的 ORM 对象） ----
@@ -264,7 +290,11 @@ async def process_task_background(task_id: int) -> None:
             # =============================================================
             logger.info(f"[任务 {task_id}] 开始相似度计算...")
             try:
-                sim_results = calculate_similarities(saved_outputs, agent_name_map)
+                sim_results = await asyncio.to_thread(
+                    calculate_similarities,
+                    saved_outputs,
+                    agent_name_map,
+                )
                 for sr in sim_results:
                     db.add(SimilarityResult(
                         task_id=task_id,
@@ -332,6 +362,7 @@ async def process_task_background(task_id: int) -> None:
                     weight_config=task.weight_config,
                     agent_name_map=agent_name_map,
                     weighted_ranking=weighted_ranking,
+                    task_id=task_id,
                 )
 
                 if summary_result["success"] and summary_result["summary_text"]:
@@ -357,6 +388,12 @@ async def process_task_background(task_id: int) -> None:
                 task.error_message = f"部分 Agent 调用失败（{fail_count}/{len(agent_results)}）"
             await db.commit()
             logger.info(f"[任务 {task_id}] → completed ✓")
+            await append_log(
+                TASK_COMPLETED,
+                f"任务 {task_id} 分析完成"
+                + (f"（部分 Agent 失败 {fail_count}/{len(agent_results)}）" if fail_count > 0 else ""),
+                user_id=task_user_id,
+            )
 
         except Exception as e:
             # ---- 全局异常：尝试标记失败 ----
@@ -372,5 +409,10 @@ async def process_task_background(task_id: int) -> None:
                     await db.commit()
             except Exception:
                 logger.error(f"[任务 {task_id}] 无法更新失败状态")
+            await append_log(
+                TASK_FAILED,
+                f"任务 {task_id} 流水线异常: {str(e)[:500]}",
+                user_id=task_user_id,
+            )
 
     logger.info(f"[任务 {task_id}] 后台流水线结束")

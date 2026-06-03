@@ -86,3 +86,11 @@ class AdminStatsResponse(BaseModel):
     # 模板统计
     total_templates: int = Field(default=0, description="Agent 模板总数")
     active_templates: int = Field(default=0, description="启用的模板数")
+
+    # 运行时调度指标（TaskRunner + LLM 槽位）
+    task_queue_depth: int = Field(default=0, description="任务队列中等待执行的任务数")
+    pipeline_active: int = Field(default=0, description="当前正在执行的流水线数")
+    pipeline_max: int = Field(default=0, description="流水线并发上限")
+    llm_active: int = Field(default=0, description="当前占用 LLM 槽位的请求数")
+    llm_max: int = Field(default=0, description="LLM 并发槽位上限")
+    llm_available_slots: int = Field(default=0, description="LLM 剩余可用槽位数")

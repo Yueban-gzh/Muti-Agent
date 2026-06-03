@@ -8,4 +8,5 @@
 | `history_service.py` | 用户历史列表 |
 | `report_service.py` | Markdown 报告生成 |
 | `pipeline_service.py` | 触发 `ai/agent_core` 后台流水线 |
+| `log_service.py` | 操作日志写入（`operation_logs` 表） |
 | `repositories/` | 按实体封装数据库查询 |

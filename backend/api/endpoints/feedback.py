@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_current_user, get_current_admin
 from db.database import get_db
-from db.models import User, DecisionTask, UserFeedback
+from db.models import User, DecisionTask, UserFeedback, TaskAgent
 from schemas.feedback import FeedbackCreate, FeedbackResponse, FeedbackStatistics
+from services.log_constants import FEEDBACK_VOTE
+from services.log_service import append_log
 
 # ============================================================================
 # 路由初始化
@@ -93,7 +95,6 @@ async def submit_feedback(
                 detail="采纳类型为 'agent' 时必须提供 chosen_agent_id",
             )
         # 验证该 agent 确实属于该任务
-        from db.models import TaskAgent
         agent_result = await db.execute(
             select(TaskAgent).where(
                 TaskAgent.id == feedback_data.chosen_agent_id,
@@ -130,6 +131,11 @@ async def submit_feedback(
     db.add(feedback)
     await db.commit()
     await db.refresh(feedback)
+
+    desc = f"任务 {feedback_data.task_id} 提交反馈，采纳类型={feedback_data.chosen_type}"
+    if feedback_data.chosen_agent_id is not None:
+        desc += f"，agent_id={feedback_data.chosen_agent_id}"
+    await append_log(FEEDBACK_VOTE, desc, user_id=current_user.id)
 
     return FeedbackResponse.model_validate(feedback)
 
