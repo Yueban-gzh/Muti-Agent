@@ -9,6 +9,7 @@ FastAPI 应用入口模块
 """
 
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,7 @@ from api.endpoints.feedback import router as feedback_router
 from api.endpoints.history import router as history_router
 from api.endpoints.templates import router as templates_router
 from api.endpoints.admin import router as admin_router
-from core.config import APP_TITLE, APP_VERSION, DATABASE_URL
+from core.config import APP_TITLE, APP_VERSION, DATABASE_URL, LLM_BACKEND
 from db.database import engine, Base, AsyncSessionLocal
 from db.init_data import seed_default_data
 
@@ -45,6 +46,13 @@ async def lifespan(app: FastAPI):
         # 启用 SQLite WAL 模式以支持更好的并发读写性能
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
     print(f"[启动] 数据库表初始化完成（{DATABASE_URL}）")
+
+    if LLM_BACKEND == "local":
+        from ai.llm.local_client import preload_local_model
+
+        print("[启动] 正在预加载本地 LLM 模型（首次约 1~3 分钟）...")
+        await asyncio.to_thread(preload_local_model)
+        print("[启动] 本地 LLM 模型已就绪")
 
     # --- 插入默认数据（管理员 + 预设模板） ---
     async with AsyncSessionLocal() as session:

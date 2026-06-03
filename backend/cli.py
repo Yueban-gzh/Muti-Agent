@@ -40,6 +40,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
+from ai.constants import DIMENSION_NAME_MAP
+
 # ============================================================================
 # 全局配置
 # ============================================================================
@@ -468,30 +470,43 @@ async def scene_view_result(client: APIClient, task_id: int):
             )
         console.print(sim_table)
 
-    # === 4. 冲突 ===
+    # === 4. 加权排名 ===
+    if data.get("weighted_ranking"):
+        scored = [r for r in data["weighted_ranking"] if r.get("score_available")]
+        if scored:
+            print_section("加权综合得分排名")
+            rank_table = Table(box=box.ROUNDED, header_style="bold cyan")
+            rank_table.add_column("排名", width=6)
+            rank_table.add_column("Agent", width=16)
+            rank_table.add_column("综合得分", width=12)
+            for item in scored:
+                rank_table.add_row(
+                    str(item["rank"]),
+                    item["agent_name"],
+                    f"{item['total_score']:.2f} / 10",
+                )
+            console.print(rank_table)
+
+    # === 5. 冲突 ===
     if data.get("conflicts"):
         print_section("观点冲突检测")
         high_c = [c for c in data["conflicts"] if c["conflict_level"] == "high"]
         if high_c:
             console.print(f"  [red]⚠ 发现 {len(high_c)} 个高冲突维度:[/]")
             for c in high_c:
-                dim_cn = {
-                    "benefit": "收益潜力", "cost": "成本可控性",
-                    "risk": "风险可控性", "tech": "技术可行性",
-                    "exec": "执行可行性", "long_term": "长期价值",
-                }.get(c["dimension"], c["dimension"])
+                dim_cn = DIMENSION_NAME_MAP.get(c["dimension"], c["dimension"])
                 console.print(
                     f"    [red]●[/] {dim_cn}: "
                     f"最高 {c['max_score']:.0f} vs 最低 {c['min_score']:.0f} "
                     f"(分差 {c['max_score'] - c['min_score']:.0f})"
                 )
 
-    # === 5. 综合建议 ===
+    # === 6. 综合建议 ===
     if data.get("final_summary"):
         print_section("综合建议")
         console.print(Markdown(data["final_summary"][:5000]))
 
-    # === 6. 后续操作 ===
+    # === 7. 后续操作 ===
     console.print()
     console.print(Rule(style="dim"))
     console.print("  [1] 提交反馈采纳")

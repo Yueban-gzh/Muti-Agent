@@ -40,17 +40,18 @@ Thumbs.db
 
 # 导出的报告
 reports/
+backend/reports/
 reports/exported_reports/
 
 # 日志
 logs/
 *.log
 
-# 敏感配置（API Key）
+# 敏感配置（API Key、本地环境）
 os.env
 .env
 *.env
-config.yaml
+!os.env.example
 
 # 模型与大数据
 models/

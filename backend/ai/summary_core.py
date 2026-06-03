@@ -5,20 +5,11 @@
 拼接为一个大型 Prompt，再次调用大模型生成最终的综合建议。
 """
 
-import asyncio
 import logging
-import traceback
 from typing import Optional
 
-import httpx
-
-from core.config import (
-    DEEPSEEK_API_KEY,
-    DEEPSEEK_BASE_URL,
-    DEEPSEEK_MODEL,
-    DEEPSEEK_TIMEOUT,
-    DEEPSEEK_MAX_RETRIES,
-)
+from ai.llm.chat import llm_chat
+from ai.scoring_core import format_ranking_for_summary
 
 logger = logging.getLogger("summary_core")
 
@@ -67,6 +58,7 @@ async def generate_final_summary(
     conflicts: list[dict],
     weight_config: Optional[str] = None,
     agent_name_map: Optional[dict[int, str]] = None,
+    weighted_ranking: Optional[list[dict]] = None,
 ) -> dict:
     """
     调用大模型生成最终综合建议。
@@ -136,67 +128,35 @@ async def generate_final_summary(
     else:
         user_message_parts.append("各维度专家意见较为一致，未发现明显冲突。")
 
+    if weighted_ranking:
+        user_message_parts.append("\n" + "=" * 60)
+        user_message_parts.append(format_ranking_for_summary(weighted_ranking))
+
     user_message_parts.append("\n请基于以上所有信息，生成你的综合建议报告。")
 
     user_message = "\n".join(user_message_parts)
 
     # =========================================================================
-    # 第 2 步：调用大模型
+    # 第 2 步：调用大模型（本地 Qwen 或 API，由 LLM_BACKEND 决定）
     # =========================================================================
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    logger.info("正在生成综合建议...")
+    result = await llm_chat(
+        SUMMARY_SYSTEM_PROMPT,
+        user_message,
+        temperature=0.5,
+        max_new_tokens=2048,
+    )
 
-    payload = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-        "temperature": 0.5,   # 较低温度，使输出更加一致和客观
-        "max_tokens": 4096,
-        "stream": False,
-    }
-
-    api_url = f"{DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
-
-    last_error = None
-
-    for attempt in range(1 + DEEPSEEK_MAX_RETRIES):
-        try:
-            async with httpx.AsyncClient(timeout=DEEPSEEK_TIMEOUT, trust_env=False) as client:
-                logger.info(f"正在调用大模型生成综合建议（第 {attempt + 1} 次尝试）...")
-                response = await client.post(api_url, json=payload, headers=headers)
-
-                if response.status_code == 200:
-                    data = response.json()
-                    summary_text = data["choices"][0]["message"]["content"]
-                    logger.info(f"综合建议生成完成，长度: {len(summary_text)} 字符")
-                    return {
-                        "success": True,
-                        "summary_text": summary_text,
-                        "error": None,
-                    }
-                else:
-                    error_detail = response.text
-                    logger.warning(f"综合建议 API 返回非 200: {response.status_code}")
-                    last_error = f"HTTP {response.status_code}: {error_detail[:300]}"
-                    if 400 <= response.status_code < 500:
-                        break
-
-        except httpx.TimeoutException:
-            last_error = f"请求超时（{DEEPSEEK_TIMEOUT}秒）"
-            logger.warning(f"综合建议第 {attempt + 1} 次调用超时")
-        except Exception as e:
-            last_error = f"异常: {str(e)}"
-            logger.error(f"综合建议第 {attempt + 1} 次调用异常: {traceback.format_exc()}")
-
-        if attempt < DEEPSEEK_MAX_RETRIES:
-            await asyncio.sleep(2 ** attempt)
+    if result["success"] and result["text"]:
+        logger.info("综合建议生成完成，长度: %d 字符", len(result["text"]))
+        return {
+            "success": True,
+            "summary_text": result["text"],
+            "error": None,
+        }
 
     return {
         "success": False,
         "summary_text": None,
-        "error": last_error or "未知错误",
+        "error": result.get("error") or "未知错误",
     }

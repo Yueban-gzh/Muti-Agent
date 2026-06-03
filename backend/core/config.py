@@ -45,8 +45,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 
 # 数据库配置
 # ============================================================================
 
-# 项目根目录（用于拼接数据库文件路径）
+# backend/ 目录（数据库等）
 BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 项目根目录 muti-agent/（模型权重、os.env）
+PROJECT_ROOT: str = os.path.dirname(BASE_DIR)
 
 # SQLite 异步数据库连接 URL
 # 使用 aiosqlite 作为异步驱动，数据库文件存储在 backend/ 目录下
@@ -93,3 +96,20 @@ DEEPSEEK_TIMEOUT: int = int(os.getenv("DEEPSEEK_TIMEOUT", "120"))
 
 # 最大重试次数
 DEEPSEEK_MAX_RETRIES: int = int(os.getenv("DEEPSEEK_MAX_RETRIES", "2"))
+
+# ============================================================================
+# 本地 LLM 配置（课程要求：本地开源模型推理）
+# ============================================================================
+
+# llm 后端：local（本地 Qwen）| api（DeepSeek，仅开发备用）
+LLM_BACKEND: str = os.getenv("LLM_BACKEND", "local").strip().lower()
+
+_default_model_path = os.path.join(
+    PROJECT_ROOT, "models", "Qwen2.5-3B-Instruct"
+).replace("\\", "/")
+
+LOCAL_MODEL_PATH: str = os.getenv("LOCAL_MODEL_PATH", _default_model_path)
+LOCAL_MAX_NEW_TOKENS: int = int(os.getenv("LOCAL_MAX_NEW_TOKENS", "2048"))
+LOCAL_TEMPERATURE: float = float(os.getenv("LOCAL_TEMPERATURE", "0.7"))
+# 同时进行的本地生成数（3090 上 2 路较稳）
+LOCAL_MAX_CONCURRENT: int = int(os.getenv("LOCAL_MAX_CONCURRENT", "2"))

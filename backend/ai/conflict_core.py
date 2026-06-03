@@ -10,6 +10,8 @@
 import json
 import logging
 
+from ai.constants import ALL_DIMENSIONS, DIMENSION_NAME_MAP
+
 logger = logging.getLogger("conflict_core")
 
 # ============================================================================
@@ -18,19 +20,6 @@ logger = logging.getLogger("conflict_core")
 
 # 冲突阈值：维度最高分 - 最低分 >= 此值时判定为高冲突
 HIGH_CONFLICT_THRESHOLD = 4
-
-# 维度中文名映射（与 prompt_builder 保持一致）
-DIMENSION_NAME_MAP = {
-    "benefit": "收益潜力",
-    "cost": "成本可控性",
-    "risk": "风险可控性",
-    "tech": "技术可行性",
-    "exec": "执行可行性",
-    "long_term": "长期价值",
-}
-
-# 所有需要检测的维度
-ALL_DIMENSIONS = ["benefit", "cost", "risk", "tech", "exec", "long_term"]
 
 
 # ============================================================================

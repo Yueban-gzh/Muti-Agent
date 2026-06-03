@@ -155,6 +155,23 @@
       "explanation": "在「风险可控性」维度上存在明显分歧...",
       "created_at": "..."
     }
+  ],
+  "weighted_ranking": [
+    {
+      "task_agent_id": 1,
+      "agent_name": "木·生长型",
+      "scores": {
+        "benefit": 8.0,
+        "cost": 7.0,
+        "risk": 6.0,
+        "tech": 9.0,
+        "exec": 8.0,
+        "long_term": 8.0
+      },
+      "total_score": 7.55,
+      "rank": 1,
+      "score_available": true
+    }
   ]
 }
 ```
@@ -191,6 +208,16 @@
 | tech | 技术可行性 | 1~10 |
 | exec | 执行可行性 | 1~10 |
 | long_term | 长期价值 | 1~10 |
+
+## 加权综合得分
+
+`GET /api/tasks/{task_id}/result` 返回 `weighted_ranking` 数组，按 `rank` 升序（未评分的 `rank` 为 `null`）。
+
+```
+综合得分 = Σ (维度分数 × 对应权重)
+```
+
+默认权重与 `weight_config` 一致：benefit 20%、cost 20%、risk 20%、tech 15%、exec 15%、long_term 10%。
 
 ## 任务状态流转
 
