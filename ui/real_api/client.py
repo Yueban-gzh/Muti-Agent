@@ -137,6 +137,43 @@ class RealAPI:
         if resp.status_code == 200:
             return resp.json()
         return None
+    def get_messages(self, task_id: int) -> list:
+        """获取讨论消息列表"""
+        resp = requests.get(
+            f"{self.base_url}/api/tasks/{task_id}/messages",
+            headers=self._headers()
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        return []
+
+    def send_message(self, task_id: int, content: str, reply_scope: str) -> bool:
+        """发送用户消息并触发Agent回复"""
+        payload = {"content": content, "reply_scope": reply_scope}
+        resp = requests.post(
+            f"{self.base_url}/api/tasks/{task_id}/messages",
+            json=payload,
+            headers=self._headers()
+        )
+        return resp.status_code in (200, 201)
+
+    def agent_exchange(self, task_id: int) -> bool:
+        """辩论模式下，让辩手自主交锋一轮"""
+        resp = requests.post(
+            f"{self.base_url}/api/tasks/{task_id}/debate/agent-exchange",
+            headers=self._headers()
+        )
+        return resp.status_code in (200, 201)
+
+    def finalize_task(self, task_id: int) -> dict:
+        """结束讨论，生成正式报告"""
+        resp = requests.post(
+            f"{self.base_url}/api/tasks/{task_id}/finalize",
+            headers=self._headers()
+        )
+        if resp.status_code in (200, 201):
+            return resp.json()
+        return None
 
     # ---------- 反馈 ----------
     def submit_feedback(self, task_id: int, chosen_type: str,
@@ -151,7 +188,7 @@ class RealAPI:
             headers=self._headers(),
             timeout=10
         )
-        if resp.status_code == 200:
+        if resp.status_code in (200, 201):
             return resp.json()
         return None
 
@@ -177,19 +214,17 @@ class RealAPI:
         return None
 
     # ---------- 模板 ----------
-    def list_templates(self, include_inactive: bool = False) -> list:
+    def list_templates(self, include_inactive: bool = False) -> dict:
         endpoint = "/api/templates/all" if include_inactive else "/api/templates/"
         resp = requests.get(
             f"{self.base_url}{endpoint}",
-            headers=self._headers(),
-            timeout=10
+            headers=self._headers()
         )
         if resp.status_code == 200:
-            return resp.json()
-        return []
-
+            return resp.json()   # 直接返回字典，不要只取 .get("templates")
+        return {"templates": [], "total": 0}
     def list_all_templates(self) -> list:
-        return self.list_templates(include_inactive=True)
+        return self.list_templates(include_inactive=True)["templates"]
 
     # ---------- 管理员后台 ----------
     def get_all_users(self) -> list:
@@ -266,3 +301,9 @@ class RealAPI:
         if resp.status_code == 200:
             return resp.json()
         return []
+    
+    def logout(self) -> bool:
+        """退出登录，清除本地 token 和用户信息"""
+        self._token = None
+        self._current_user = None
+        return True

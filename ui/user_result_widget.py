@@ -307,7 +307,7 @@ class UserResultWidget(QWidget):
             chosen_agent_id=chosen_agent_id,
             comment=comment
         )
-        if result and result.get("task_id"):
+        if result:
             QMessageBox.information(self, "反馈", "感谢您的反馈！")
             self.submit_feedback_btn.setEnabled(False)
         else:

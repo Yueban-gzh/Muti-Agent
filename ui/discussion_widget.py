@@ -1,9 +1,9 @@
 # ui/discussion_widget.py
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QMessageBox, QScrollArea, QFrame
+    QLineEdit, QPushButton, QMessageBox, QScrollArea, QFrame, QApplication
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 
 # 颜色池，用于不同 Agent
@@ -55,8 +55,65 @@ class MessageBubble(QWidget):
             outer_layout.addWidget(bubble)
             outer_layout.addStretch()
 
-        bubble.setMaximumWidth(700)
+        bubble.setMaximumWidth(900)
+        bubble.setMinimumWidth(300)   # 可选，保证最小宽度
 
+
+# ========== 后台获取结果的线程 ==========
+class FetchResultThread(QThread):
+    result_ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, api, task_id):
+        super().__init__()
+        self.api = api
+        self.task_id = task_id
+
+    def run(self):
+        try:
+            result = self.api.get_debate_result(self.task_id)
+            if result:
+                self.result_ready.emit(result)
+            else:
+                self.error.emit("获取结果失败")
+        except Exception as e:
+            self.error.emit(str(e))
+
+# ========== 后台发送消息的线程 ==========
+class SendMessageThread(QThread):
+    finished = pyqtSignal(bool)  # 成功或失败
+    error = pyqtSignal(str)
+
+    def __init__(self, api, task_id, content, reply_scope):
+        super().__init__()
+        self.api = api
+        self.task_id = task_id
+        self.content = content
+        self.reply_scope = reply_scope
+
+    def run(self):
+        try:
+            success = self.api.send_message(self.task_id, self.content, self.reply_scope)
+            self.finished.emit(success)
+        except Exception as e:
+            self.error.emit(str(e))
+
+# ========== 正反方辩论的线程 ==========
+class AgentExchangeThread(QThread):
+    finished = pyqtSignal(bool)
+    error = pyqtSignal(str)
+
+    def __init__(self, api, task_id):
+        super().__init__()
+        self.api = api
+        self.task_id = task_id
+
+    def run(self):
+        try:
+            success = self.api.agent_exchange(self.task_id)
+            self.finished.emit(success)
+        except Exception as e:
+            self.error.emit(str(e))
 
 class DiscussionWidget(QWidget):
     def __init__(self, user_info, api_client, stack, task_id, question, decision_mode):
@@ -67,7 +124,10 @@ class DiscussionWidget(QWidget):
         self.task_id = task_id
         self.question = question
         self.decision_mode = decision_mode
-        self.poll_timer = None
+        self.poll_timer = None          # 定时刷新消息
+        self.status_timer = None        # 定时查询任务状态
+        self._finalizing = False        # 防止重复提交 finalize
+        self.fetch_thread = None        # 后台线程
 
         self.init_ui()
         self.load_messages()
@@ -114,7 +174,7 @@ class DiscussionWidget(QWidget):
         btn_layout.addStretch()
         self.exchange_btn.clicked.connect(self.agent_exchange)
         self.exchange_btn.setVisible(self.decision_mode == "debate")
-        self.finalize_btn = QPushButton("结束讨论")
+        self.finalize_btn = QPushButton("生成报告")
         self.finalize_btn.clicked.connect(self.finalize)
         btn_layout.addWidget(self.exchange_btn)
         btn_layout.addWidget(self.finalize_btn)
@@ -127,16 +187,16 @@ class DiscussionWidget(QWidget):
         self.display_messages(messages)
 
     def auto_send_initial_message(self):
-        # 检查当前是否已有任何消息（除了可能的系统提示）
         messages = self.api.get_messages(self.task_id)
-        if not messages:
-            # 发送一条默认消息，触发 Agent 首次回复
+        # 检查是否已有用户或 Agent 发言
+        has_user_or_agent = any(msg.get("role") in ("user", "agent") for msg in messages)
+        if not has_user_or_agent:
             initial_content = "请各位专家对当前问题给出初步分析。"
             reply_scope = "all_brief" if self.decision_mode != "debate" else "debate_round"
             success = self.api.send_message(self.task_id, initial_content, reply_scope)
             if success:
-                # 发送成功后立即刷新消息
                 self.load_messages()
+
     def display_messages(self, messages):
         # 清空旧消息
         while self.chat_layout.count():
@@ -164,52 +224,114 @@ class DiscussionWidget(QWidget):
         text = self.input_edit.text().strip()
         if not text:
             return
+        self.send_btn.setEnabled(False)
+        self.send_btn.setText("发送中...")
         reply_scope = "all_brief" if self.decision_mode != "debate" else "debate_round"
-        success = self.api.send_message(self.task_id, text, reply_scope)
+        self.send_thread = SendMessageThread(self.api, self.task_id, text, reply_scope)
+        self.send_thread.finished.connect(self.on_message_sent)
+        self.send_thread.error.connect(self.on_message_error)
+        self.send_thread.start()
+
+    def on_message_sent(self, success):
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText("发送")
         if success:
             self.input_edit.clear()
+            # 立即刷新一次消息（轮询会持续刷新，但主动刷一次体验更好）
             self.load_messages()
         else:
             QMessageBox.warning(self, "错误", "发送失败")
 
-    def agent_exchange(self):
-        success = self.api.agent_exchange(self.task_id)
-        if success:
-            self.load_messages()
-        else:
-            QMessageBox.warning(self, "错误", "交锋失败")
+    def on_message_error(self, error_msg):
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText("发送")
+        QMessageBox.warning(self, "错误", f"发送失败: {error_msg}")
 
+    def agent_exchange(self):
+        self.exchange_btn.setEnabled(False)
+        self.exchange_btn.setText("交锋中...")
+        self.exchange_thread = AgentExchangeThread(self.api, self.task_id)
+        self.exchange_thread.finished.connect(self.on_exchange_finished)
+        self.exchange_thread.error.connect(self.on_exchange_error)
+        self.exchange_thread.start()
+
+    def on_exchange_finished(self, success):
+        self.exchange_btn.setEnabled(True)
+        self.exchange_btn.setText("辩手交锋")
+        if success:
+            self.load_messages()   # 刷新消息
+        else:
+            QMessageBox.warning(self, "错误", "交锋失败，请重试")
+
+    def on_exchange_error(self, error_msg):
+        self.exchange_btn.setEnabled(True)
+        self.exchange_btn.setText("辩手交锋")
+        QMessageBox.warning(self, "错误", f"交锋失败: {error_msg}")
+    # ========== 改进的 finalize 逻辑（防重复 + 轮询 + 后台获取） ==========
     def finalize(self):
+        if self._finalizing:
+            return
+        self._finalizing = True
         self.finalize_btn.setEnabled(False)
         self.finalize_btn.setText("正在生成报告...")
         result = self.api.finalize_task(self.task_id)
-        if result and result.get("status") == "completed":
-            self.finish_and_show_result()
+        if result and result.get("status") in ("finalizing", "completed"):
+            self.poll_task_status()
         else:
             QMessageBox.warning(self, "错误", "结束讨论失败，请重试")
+            self._finalizing = False
             self.finalize_btn.setEnabled(True)
-            self.finalize_btn.setText("生成正式报告")
+            self.finalize_btn.setText("生成报告")
 
-    def finish_and_show_result(self):
-        result_data = self.api.get_debate_result(self.task_id)
-        if not result_data:
-            QMessageBox.warning(self, "错误", "无法获取分析结果")
+    def poll_task_status(self):
+        if self.status_timer:
+            self.status_timer.stop()
+        self.status_timer = QTimer()
+        self.status_timer.timeout.connect(self.check_status)
+        self.status_timer.start(3000)   # 每3秒轮询一次
+
+    def check_status(self):
+        status = self.api.get_debate_status(self.task_id)
+        if status == "completed":
+            self.status_timer.stop()
+            self.start_fetching_result()
+        elif status == "failed":
+            self.status_timer.stop()
+            QMessageBox.warning(self, "错误", "报告生成失败")
+            self._finalizing = False
             self.finalize_btn.setEnabled(True)
-            self.finalize_btn.setText("生成正式报告")
-            return
+            self.finalize_btn.setText("生成报告")
 
+    def start_fetching_result(self):
+        """后台获取结果，避免界面卡死"""
+        self.finalize_btn.setText("正在加载结果...")
+        QApplication.processEvents()   # 刷新界面
+        self.fetch_thread = FetchResultThread(self.api, self.task_id)
+        self.fetch_thread.result_ready.connect(self.on_result_ready)
+        self.fetch_thread.error.connect(self.on_result_error)
+        self.fetch_thread.start()
+
+    def on_result_ready(self, result_data):
+        self.fetch_thread = None
+        # 跳转到结果页
         for i in range(self.stack.count()):
             w = self.stack.widget(i)
             if w.__class__.__name__ == "UserResultWidget":
                 w.load_result(self.task_id, result_data, show_export=False)
                 self.stack.setCurrentWidget(w)
                 return
-
         from ui.user_result_widget import UserResultWidget
         result_widget = UserResultWidget(self.user_info, self.api, self.stack)
         self.stack.addWidget(result_widget)
         result_widget.load_result(self.task_id, result_data, show_export=False)
         self.stack.setCurrentWidget(result_widget)
+
+    def on_result_error(self, error_msg):
+        self.fetch_thread = None
+        QMessageBox.warning(self, "错误", f"加载结果失败: {error_msg}")
+        self._finalizing = False
+        self.finalize_btn.setEnabled(True)
+        self.finalize_btn.setText("结束讨论")
 
     def start_polling(self):
         self.poll_timer = QTimer()
@@ -219,4 +341,12 @@ class DiscussionWidget(QWidget):
     def closeEvent(self, event):
         if self.poll_timer:
             self.poll_timer.stop()
+        if self.status_timer:
+            self.status_timer.stop()
+        if hasattr(self, 'exchange_thread') and self.exchange_thread and self.exchange_thread.isRunning():
+            self.exchange_thread.quit()
+            self.exchange_thread.wait(1000)
+        if hasattr(self, 'send_thread') and self.send_thread and self.send_thread.isRunning():
+            self.send_thread.quit()
+            self.send_thread.wait(1000)
         event.accept()

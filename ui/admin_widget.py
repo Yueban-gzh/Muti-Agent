@@ -6,7 +6,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTableWidget,
                              QTableWidgetItem, QPushButton, QHBoxLayout, QLabel, QHeaderView,
                              QFileDialog, QMessageBox, QDialog, QFormLayout, QLineEdit, QTextEdit,
-                             QComboBox, QDialogButtonBox, QTextBrowser, QSizePolicy,QGridLayout)
+                             QComboBox, QDialogButtonBox, QTextBrowser, QSizePolicy,QGridLayout,QScrollArea,QFrame)
 from PyQt6.QtCore import Qt
 
 class AdminWidget(QWidget):
@@ -423,22 +423,31 @@ class AdminWidget(QWidget):
         self.refresh_templates()
 
     def refresh_templates(self):
-        templates = self.api.list_templates(include_inactive=True)
+        response = self.api.list_templates(include_inactive=True)
+        # 处理两种可能的返回格式：直接列表 或 包含 templates 字段的字典
+        if isinstance(response, dict):
+            templates = response.get("templates", [])
+        else:
+            templates = response if isinstance(response, list) else []
+        
         self.template_table.setRowCount(len(templates))
         for row, t in enumerate(templates):
+            if not isinstance(t, dict):
+                continue
             self.template_table.setRowHeight(row, 44)
-            self.template_table.setItem(row, 0, self._create_center_item(str(t["id"])))
+            self.template_table.setItem(row, 0, self._create_center_item(str(t.get("id", ""))))
             
-            name_item = QTableWidgetItem(t["name"])
+            name_item = QTableWidgetItem(t.get("name", ""))
             font = self.font()
             font.setBold(True)
             name_item.setFont(font)
             self.template_table.setItem(row, 1, name_item)
             
-            self.template_table.setItem(row, 2, QTableWidgetItem(t["role_description"]))
-            self.template_table.setItem(row, 3, QTableWidgetItem(t["focus_area"]))
-            self.template_table.setItem(row, 4, self._create_center_item(t["tone"]))
+            self.template_table.setItem(row, 2, QTableWidgetItem(t.get("role_description", "")))
+            self.template_table.setItem(row, 3, QTableWidgetItem(t.get("focus_area", "")))
+            self.template_table.setItem(row, 4, self._create_center_item(t.get("tone", "")))
             
+            # 操作按钮
             btn_widget = QWidget()
             btn_layout = QHBoxLayout(btn_widget)
             btn_layout.setContentsMargins(6, 0, 6, 0)
@@ -559,17 +568,32 @@ class AdminWidget(QWidget):
         return card
     
     def init_stats_tab(self):
-        layout = QVBoxLayout(self.stats_tab)
-        layout.setContentsMargins(16, 20, 16, 16)
-        layout.setSpacing(16)
+        # 1. 最外层的主布局（垂直排列：上方是滚动区域，下方是固定刷新按钮）
+        main_layout = QVBoxLayout(self.stats_tab)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(12) # 滚动区域与固定按钮之间的间距
 
-        # 统计卡片容器（使用网格布局，每行3个）
+        # 2. 创建滚动区域（只包裹卡片和日志面板）
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        main_layout.addWidget(scroll_area) # 将滚动区域添加到主布局
+
+        # 滚动区域内部的承载容器
+        container_widget = QWidget()
+        scroll_area.setWidget(container_widget)
+
+        # 内部容器的布局
+        layout = QVBoxLayout(container_widget)
+        layout.setContentsMargins(24, 24, 24, 12) # 稍微减小底部内边距
+        layout.setSpacing(24) 
+
+        # --- [统计卡片区域] ---
         stats_frame = QWidget()
         stats_layout = QGridLayout(stats_frame)
-        stats_layout.setSpacing(12)
+        stats_layout.setSpacing(12) 
         stats_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 定义统计卡片： key, 显示名称, 颜色, 所在行列 (row, col)
         card_configs = [
             ("total_users", "用户总数", "#94a3b8", 0, 0),
             ("total_tasks", "任务总数", "#b89a6a", 0, 1),
@@ -586,13 +610,30 @@ class AdminWidget(QWidget):
         for key, label_name, border_color, row, col in card_configs:
             card = QWidget()
             card.setObjectName("StatCard")
-            card.setStyleSheet(f"QWidget#StatCard {{ border-left: 4px solid {border_color}; background-color: #0f172a; border-radius: 8px; }}")
+            card.setStyleSheet(f"""
+                QWidget#StatCard {{ 
+                    border-left: 4px solid {border_color}; 
+                    border-top: 1px solid transparent;
+                    border-right: 1px solid transparent;
+                    border-bottom: 1px solid transparent;
+                    border-radius: 6px; 
+                }}
+                QWidget#StatCard:hover {{
+                    border-top: 1px solid {border_color}40;
+                    border-right: 1px solid {border_color}40;
+                    border-bottom: 1px solid {border_color}40;
+                }}
+            """)
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(14, 12, 14, 12)
+            card_layout.setContentsMargins(14, 10, 14, 10)
+            card_layout.setSpacing(4) 
+            
             title_lbl = QLabel(label_name)
-            title_lbl.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: bold;")
+            title_lbl.setStyleSheet("font-size: 12px; font-weight: 500;") 
+            
             value_lbl = QLabel("0")
-            value_lbl.setStyleSheet(f"color: {border_color}; font-size: 24px; font-weight: bold;")
+            value_lbl.setStyleSheet(f"color: {border_color}; font-size: 22px; font-weight: 700;") 
+            
             card_layout.addWidget(title_lbl)
             card_layout.addWidget(value_lbl)
             stats_layout.addWidget(card, row, col)
@@ -600,11 +641,26 @@ class AdminWidget(QWidget):
 
         layout.addWidget(stats_frame)
 
+        # --- [下方一体化控制与列表面板] ---
+        panel_widget = QWidget()
+        panel_widget.setObjectName("LogPanel")
+        panel_widget.setStyleSheet("QWidget#LogPanel { border: 1px solid rgba(128, 128, 128, 0.15); border-radius: 12px; }")
+        
+        panel_layout = QVBoxLayout(panel_widget)
+        panel_layout.setContentsMargins(20, 20, 20, 20)
+        panel_layout.setSpacing(16)
+
         # 筛选栏
         filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("事件类型:"))
+        filter_layout.setSpacing(12)
+        
+        filter_title = QLabel("事件类型:")
+        filter_title.setStyleSheet("font-size: 14px; font-weight: bold; border: none; background: transparent;")
+        filter_layout.addWidget(filter_title)
+        
         self.event_type_combo = QComboBox()
-        # 可读的事件类型映射
+        self.event_type_combo.setMinimumWidth(140)
+        
         event_type_map = {
             "全部": None,
             "用户注册": "user.register",
@@ -618,26 +674,55 @@ class AdminWidget(QWidget):
         for display, _ in event_type_map.items():
             self.event_type_combo.addItem(display)
         filter_layout.addWidget(self.event_type_combo)
+        
         filter_btn = QPushButton("筛选")
         filter_btn.clicked.connect(self.refresh_stats)
         filter_layout.addWidget(filter_btn)
         filter_layout.addStretch()
-        layout.addLayout(filter_layout)
+        
+        panel_layout.addLayout(filter_layout)
+
+        # 日志表格标题
+        log_title = QLabel("操作日志明细")
+        log_title.setStyleSheet("font-size: 15px; font-weight: bold; border: none; background: transparent; margin-top: 8px;")
+        panel_layout.addWidget(log_title)
 
         # 日志表格
-        layout.addWidget(QLabel("操作日志"))
         self.log_table = QTableWidget()
         self.log_table.setColumnCount(5)
         self.log_table.setHorizontalHeaderLabels(["ID", "用户ID", "事件类型", "描述", "时间"])
         self.log_table.setAlternatingRowColors(True)
         self.log_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.log_table)
+        self.log_table.setMinimumHeight(450) 
+        
+        self.log_table.setStyleSheet("""
+            QTableWidget { border: none; border-radius: 0px; }
+            QTableWidget::item { padding: 10px; }
+            QHeaderView::section { padding: 8px; border: none; font-weight: 600; }
+        """)
+        self.log_table.setFrameShape(QFrame.Shape.NoFrame)
+        self.log_table.verticalHeader().setVisible(False)
+        panel_layout.addWidget(self.log_table)
+        
+        # 将日志大面板塞入滚动容器
+        layout.addWidget(panel_widget)
 
+        # --- 3. 【核心修改】固定在最底部的刷新按钮 ---
+        # 创建一个底部的容器，给它加点边距，让按钮离屏幕边缘有一点呼吸感
+        bottom_container = QWidget()
+        bottom_layout = QHBoxLayout(bottom_container)
+        bottom_layout.setContentsMargins(24, 0, 24, 16) # 左右24px对齐内容，下边留16px防死粘
+        
         refresh_btn = QPushButton("刷新统计与日志")
         refresh_btn.clicked.connect(self.refresh_stats)
-        layout.addWidget(refresh_btn)
+        
+        bottom_layout.addWidget(refresh_btn)
+        
+        # 直接加进 main_layout（脱离滚动区域）
+        main_layout.addWidget(bottom_container)
 
-        self.refresh_stats()
+        # 触发首次刷新
+        # self.refresh_stats()
 
     def refresh_stats(self):
         stats = self.api.get_admin_stats()

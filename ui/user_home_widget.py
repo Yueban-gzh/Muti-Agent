@@ -35,6 +35,7 @@ class UserHomeWidget(QWidget):
         mode_layout.addWidget(QLabel("决策模式:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["多角度分析", "正反辩论", "专家会诊", "风险评审"])
+        self.mode_combo.currentTextChanged.connect(self.on_mode_changed)
         self.mode_combo.setCurrentIndex(0)
         mode_layout.addWidget(self.mode_combo)
         mode_layout.addStretch()
@@ -65,6 +66,13 @@ class UserHomeWidget(QWidget):
 
         self.setLayout(layout)
         self.on_agent_count_changed(2)
+    
+    def on_mode_changed(self, mode_text):
+        is_debate = (mode_text == "正反辩论")
+        for inp in self.agent_inputs:
+            stance_widget = inp.get("stance")
+            if stance_widget:
+                stance_widget.setVisible(is_debate)
 
     def on_agent_count_changed(self, count):
         # 清空
@@ -88,16 +96,29 @@ class UserHomeWidget(QWidget):
             
             tone_edit = QLineEdit()
             tone_edit.setPlaceholderText("输出风格，如：鼓励型/严谨型/中立型")
-            
+            # 在 tone_edit 后面添加
+            stance_combo = QComboBox()
+            stance_items = {
+                "正方": "pro",
+                "反方": "con",
+                "中立": "neutral",
+                "评审": "judge"
+            }
+            for display, value in stance_items.items():
+                stance_combo.addItem(display, value)
+            stance_combo.setCurrentIndex(2)  # 默认选中“中立”
+            stance_combo.setVisible(self.mode_combo.currentText() == "正反辩论")  # 仅辩论模式显示
             weight_spin = QDoubleSpinBox()
             weight_spin.setRange(0.0, 1.0)
             weight_spin.setSingleStep(0.05)
             weight_spin.setValue(0.5)
 
             form.addRow("名称:", name_edit)
+            form.addRow("辩论立场:", stance_combo)
             form.addRow("角色描述:", role_edit)
             form.addRow("关注领域:", focus_edit)
             form.addRow("风格:", tone_edit)
+             
             form.addRow("权重:", weight_spin)
             group.setLayout(form)
             self.agent_layout.addWidget(group)
@@ -106,11 +127,12 @@ class UserHomeWidget(QWidget):
                 "role": role_edit,
                 "focus": focus_edit,
                 "tone": tone_edit,
-                "weight": weight_spin
+                "weight": weight_spin,
+                "stance": stance_combo
             })
+        self.on_mode_changed(self.mode_combo.currentText())
 
     def on_submit(self):
-        # 防止重复提交
         if hasattr(self, '_submitting') and self._submitting:
             return
         question = self.question_edit.toPlainText().strip()
@@ -135,12 +157,17 @@ class UserHomeWidget(QWidget):
             if not name:
                 QMessageBox.warning(self, "错误", f"智能体 {idx+1} 的名称不能为空")
                 return
-            agents.append({
+
+            agent = {
                 "agent_name": name,
                 "role_description": role,
                 "focus_area": focus,
-                "tone": tone
-            })
+                "tone": tone,
+            }
+            if decision_mode == "debate":
+                stance = inp["stance"].currentData()  # 获取存储的英文值
+                agent["stance"] = stance
+            agents.append(agent)
 
         payload = {
             "question": question,
@@ -163,17 +190,11 @@ class UserHomeWidget(QWidget):
             )
             self.stack.addWidget(discussion_widget)
             self.stack.setCurrentWidget(discussion_widget)
-            # 创建成功后恢复按钮状态，以便下次创建新任务时按钮可用
             self._reset_submit_button()
         else:
             self._reset_submit_button()
             QMessageBox.warning(self, "错误", "创建任务失败")
-    def _reset_submit_button(self):
-        """恢复按钮状态"""
-        self.submit_btn.setEnabled(True)
-        self.submit_btn.setText("开始分析")
-        if hasattr(self, '_submitting'):
-            self._submitting = False
+
     def poll_task_result(self, task_id):
         """开始轮询任务状态，每2秒检查一次，不设超时"""
         self.poll_timer = QTimer()
