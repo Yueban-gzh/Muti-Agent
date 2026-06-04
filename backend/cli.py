@@ -41,6 +41,13 @@ from rich.text import Text
 from rich.tree import Tree
 
 from ai.constants import DIMENSION_NAME_MAP
+from cli_persona_help import (
+    CONTEXT_NOTES_GUIDE,
+    DEBATE_COUNT_GUIDE,
+    NON_DEBATE_COUNT_GUIDE,
+    PERSONA_FIELD_GUIDES,
+    STANCE_GUIDE,
+)
 
 # ============================================================================
 # 全局配置
@@ -114,19 +121,90 @@ class APIClient:
             r = await c.get(f"{API_BASE}/api/templates/", headers=self.headers)
             return r.json().get("templates", []) if r.status_code == 200 else []
 
+    async def recommend_agents(
+        self, question: str, decision_mode: str, agent_count: int = 3
+    ) -> dict:
+        async with httpx.AsyncClient(timeout=15, trust_env=False) as c:
+            r = await c.post(
+                f"{API_BASE}/api/templates/recommend",
+                json={
+                    "question": question,
+                    "decision_mode": decision_mode,
+                    "agent_count": agent_count,
+                },
+                headers=self.headers,
+            )
+            return r.json() if r.status_code == 200 else {"error": r.text}
+
     # ---- 任务 ----
-    async def create_task(self, question: str, mode: str, agents: list,
-                          weight: str | None = None) -> dict:
+    async def create_task(
+        self,
+        question: str,
+        mode: str,
+        agents: list,
+        weight: str | None = None,
+        *,
+        context_notes: str | None = None,
+        legacy_auto_finalize: bool = False,
+    ) -> dict:
         payload = {
-            "question": question, "decision_mode": mode,
-            "agent_count": len(agents), "agents": agents,
+            "question": question,
+            "decision_mode": mode,
+            "agent_count": len(agents),
+            "agents": agents,
+            "start_discussion": not legacy_auto_finalize,
+            "legacy_auto_finalize": legacy_auto_finalize,
         }
         if weight:
             payload["weight_config"] = weight
+        if context_notes:
+            payload["context_notes"] = context_notes
         async with httpx.AsyncClient(timeout=30, trust_env=False) as c:
-            r = await c.post(f"{API_BASE}/api/tasks/create", json=payload,
-                             headers=self.headers)
+            r = await c.post(
+                f"{API_BASE}/api/tasks/create",
+                json=payload,
+                headers=self.headers,
+            )
             return r.json() if r.status_code == 201 else {"error": r.text}
+
+    async def post_message(
+        self, task_id: int, content: str, reply_scope: str = "all_brief",
+        target_agent_id: int | None = None,
+    ) -> dict:
+        payload = {"content": content, "reply_scope": reply_scope}
+        if target_agent_id:
+            payload["target_agent_id"] = target_agent_id
+        async with httpx.AsyncClient(timeout=300, trust_env=False) as c:
+            r = await c.post(
+                f"{API_BASE}/api/tasks/{task_id}/messages",
+                json=payload,
+                headers=self.headers,
+            )
+            return r.json() if r.status_code == 201 else {"error": r.text}
+
+    async def get_debate_roster(self, task_id: int) -> list:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as c:
+            r = await c.get(
+                f"{API_BASE}/api/tasks/{task_id}/debate-roster",
+                headers=self.headers,
+            )
+            return r.json() if r.status_code == 200 else []
+
+    async def debate_agent_exchange(self, task_id: int) -> dict:
+        async with httpx.AsyncClient(timeout=600, trust_env=False) as c:
+            r = await c.post(
+                f"{API_BASE}/api/tasks/{task_id}/debate/agent-exchange",
+                headers=self.headers,
+            )
+            return r.json() if r.status_code == 200 else {"error": r.text}
+
+    async def finalize_task(self, task_id: int) -> dict:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as c:
+            r = await c.post(
+                f"{API_BASE}/api/tasks/{task_id}/finalize",
+                headers=self.headers,
+            )
+            return r.json() if r.status_code == 200 else {"error": r.text}
 
     async def get_status(self, task_id: int) -> dict:
         async with httpx.AsyncClient(timeout=10, trust_env=False) as c:
@@ -263,6 +341,276 @@ async def scene_auth(client: APIClient) -> bool:
             return True
 
 
+DEBATE_STANCE_CHOICES = {
+    "1": ("pro", "支持方（正方）"),
+    "2": ("con", "反对方（反方）"),
+    "3": ("judge", "评审方"),
+}
+
+
+STANCE_LABEL_MAP = {"pro": "支持方", "con": "反对方", "judge": "评审方"}
+
+
+def _show_persona_field_guide(field_key: str) -> None:
+    label, help_text, example = PERSONA_FIELD_GUIDES[field_key]
+    console.print(f"    [bold]{label}[/] — [dim]{help_text}[/]")
+    console.print(f"    [dim]示例: {example}[/]")
+
+
+def _pick_debate_stance(*, template_name: str | None = None, suggested: str | None = None) -> tuple[str, str]:
+    if template_name:
+        sug_label = STANCE_LABEL_MAP.get(suggested or "", suggested or "无")
+        console.print(f"    [dim]模板「{template_name}」推荐立场: {sug_label}[/]")
+    console.print(f"    [dim]{STANCE_GUIDE}[/]")
+    console.print("    [1] 支持方(正方)  [2] 反对方(反方)  [3] 评审方")
+    sc = Prompt.ask("    指定立场", choices=["1", "2", "3"], default="1")
+    return DEBATE_STANCE_CHOICES[sc]
+
+
+def _prompt_required_field(field_key: str) -> str:
+    _show_persona_field_guide(field_key)
+    label = PERSONA_FIELD_GUIDES[field_key][0]
+    while True:
+        val = Prompt.ask(f"    {label}").strip()
+        if val:
+            return val
+        error(f"{label}不能为空")
+
+
+def _prompt_optional_field(field_key: str, *, default: str = "") -> str | None:
+    _show_persona_field_guide(field_key)
+    label = PERSONA_FIELD_GUIDES[field_key][0]
+    val = Prompt.ask(f"    {label}（回车跳过）", default=default).strip()
+    if val:
+        return val
+    return default if default else None
+
+
+def _prompt_optional_override(field_key: str, default: str | None) -> str | None:
+    """回车保留模板默认；输入新值则覆盖。"""
+    _show_persona_field_guide(field_key)
+    label = PERSONA_FIELD_GUIDES[field_key][0]
+    hint = (default or "")[:60]
+    if len((default or "")) > 60:
+        hint += "…"
+    val = Prompt.ask(
+        f"    {label} [dim](回车保留当前: {hint or '空'})[/]",
+        default="",
+    ).strip()
+    if not val:
+        return None
+    if default and val == default:
+        return None
+    return val
+
+
+def _pick_agent_count(mode_key: str) -> int:
+    if mode_key == "debate":
+        console.print(Panel(DEBATE_COUNT_GUIDE, title="辩论人数说明", border_style="yellow"))
+        default = "3"
+    else:
+        console.print(f"  [dim]{NON_DEBATE_COUNT_GUIDE}[/]")
+        default = "3"
+    return int(
+        IntPrompt.ask(
+            "  选择专家/辩手人数",
+            choices=["2", "3", "4", "5"],
+            default=default,
+        )
+    )
+
+
+def _validate_debate_slots(slots: list[dict]) -> bool:
+    stances = [s.get("stance") for s in slots]
+    if "pro" not in stances or "con" not in stances:
+        error("辩论须至少 1 名支持方 + 1 名反对方；请调整人数或立场后重试")
+        return False
+    if stances.count("judge") > 1:
+        error("评审方最多 1 名")
+        return False
+    n = len(slots)
+    if n == 2 and "judge" not in stances:
+        info("当前为 2 人辩论（无评审），交锋后不会自动生成评审归纳")
+    elif n >= 4:
+        info("4 人以上请确认正方/反方侧人数均衡，避免只有一方多人发言")
+    return True
+
+
+async def _slots_from_recommendation(
+    client: APIClient,
+    question: str,
+    mode_key: str,
+    agent_count: int,
+    templates: list[dict],
+) -> list[dict] | None:
+    """调用推荐 API，用户确认后生成 slot 列表；取消则返回 None。"""
+    by_id = {t["id"]: t for t in templates}
+    with Status("[cyan]正在根据问题推荐人设...", spinner="dots"):
+        rec = await client.recommend_agents(question, mode_key, agent_count)
+
+    if "error" in rec:
+        error(f"推荐失败: {str(rec['error'])[:200]}")
+        return None
+
+    agents = rec.get("agents") or []
+    if not agents:
+        error("推荐结果为空，请改用手动配置")
+        return None
+
+    console.print(Panel(rec.get("hint", ""), title="系统推荐说明", border_style="green"))
+    rt = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    rt.add_column("#", width=3)
+    rt.add_column("模板/名称", width=14)
+    rt.add_column("背景", width=22)
+    rt.add_column("关注", width=20)
+    rt.add_column("推荐立场", width=8)
+    for i, a in enumerate(agents, 1):
+        sug = a.get("suggested_stance")
+        rt.add_row(
+            str(i),
+            a.get("agent_name", "-"),
+            (a.get("role_description") or "-")[:20],
+            (a.get("focus_area") or "-")[:18],
+            STANCE_LABEL_MAP.get(sug, "-") if mode_key == "debate" else "-",
+        )
+    console.print(rt)
+
+    if not Confirm.ask("采用以上推荐人设?", default=True):
+        return None
+
+    slots: list[dict] = []
+    for a in agents:
+        tid = a.get("template_id")
+        tpl = by_id.get(tid)
+        if not tpl:
+            error(f"推荐模板 ID {tid} 不可用，请改用手动配置")
+            return None
+        slot: dict = {"source": "template", "template": tpl, "stance": None}
+        if mode_key == "debate":
+            sug = a.get("suggested_stance")
+            if sug in STANCE_LABEL_MAP:
+                use_sug = Confirm.ask(
+                    f"  「{tpl['name']}」采用推荐立场「{STANCE_LABEL_MAP[sug]}」?",
+                    default=True,
+                )
+                slot["stance"] = sug if use_sug else _pick_debate_stance(template_name=tpl["name"])[0]
+            else:
+                slot["stance"] = _pick_debate_stance(template_name=tpl["name"])[0]
+        slots.append(slot)
+
+    extra_all = Confirm.ask("是否为全体专家添加统一的「本案补充」?", default=False)
+    if extra_all:
+        _show_persona_field_guide("extra_notes")
+        note = Prompt.ask("    本案补充", default="").strip()
+        if note:
+            for slot in slots:
+                slot["extra_notes"] = note
+
+    return slots
+
+
+def _configure_agent_slot(
+    templates: list[dict],
+    idx: int,
+    *,
+    mode_key: str,
+) -> dict:
+    """配置单个 Agent：模板 / 自定义 / 模板+微调。"""
+    console.print(f"\n  [bold]Agent {idx + 1}[/] 人设配置")
+    console.print("    [1] 从模板选择（可微调四字段 + 本案补充）")
+    console.print("    [2] 完全自定义人设（手填名称/背景/关注/风格）")
+    console.print(
+        "    [dim]每项输入前会显示说明与示例；也可退出后改选「系统推荐人设」。[/]"
+    )
+    src = Prompt.ask("    选择", choices=["1", "2"], default="1")
+
+    slot: dict = {"source": "template" if src == "1" else "custom", "stance": None}
+
+    if src == "1":
+        while True:
+            num = IntPrompt.ask("    模板编号（见上方表格）", default=1)
+            if 1 <= num <= len(templates):
+                tpl = templates[num - 1]
+                break
+            error(f"请输入 1-{len(templates)}")
+        slot["template"] = tpl
+        info(f"已选模板: {tpl['name']}")
+
+        if Confirm.ask("    是否微调该 Agent 的人设字段?", default=False):
+            console.print("    [dim]以下每项回车=保留模板原值[/]")
+            ov = _prompt_optional_override("agent_name", tpl.get("name"))
+            if ov:
+                slot["agent_name"] = ov
+            for key in ("role_description", "focus_area", "tone"):
+                ov = _prompt_optional_override(key, tpl.get(key))
+                if ov:
+                    slot[key] = ov
+
+        extra = _prompt_optional_field("extra_notes")
+        if extra:
+            slot["extra_notes"] = extra
+    else:
+        console.print(Panel(
+            "自定义人设会完整写入本任务，不关联模板库。\n"
+            "「展示名称」「专业背景」必填；「关注重点」可空。",
+            title="自定义说明",
+            border_style="dim",
+        ))
+        slot["template"] = None
+        slot["agent_name"] = _prompt_required_field("agent_name")
+        slot["role_description"] = _prompt_required_field("role_description")
+        slot["focus_area"] = _prompt_optional_field("focus_area")
+        tone = _prompt_optional_field("tone", default="理性、简洁、有依据")
+        slot["tone"] = tone or "理性、简洁、有依据"
+        extra = _prompt_optional_field("extra_notes")
+        if extra:
+            slot["extra_notes"] = extra
+        info(f"自定义: {slot['agent_name']}")
+
+    if mode_key == "debate":
+        suggested = slot["template"].get("default_stance") if slot.get("template") else None
+        tname = slot["template"]["name"] if slot.get("template") else slot.get("agent_name")
+        stance_key, stance_name = _pick_debate_stance(
+            template_name=tname, suggested=suggested
+        )
+        slot["stance"] = stance_key
+        info(f"立场: {stance_name}")
+
+    return slot
+
+
+def _slot_display_name(slot: dict) -> str:
+    if slot.get("agent_name"):
+        return slot["agent_name"]
+    tpl = slot.get("template")
+    return tpl["name"] if tpl else "?"
+
+
+def _slot_display_role(slot: dict) -> str:
+    if slot.get("role_description"):
+        return slot["role_description"][:24]
+    tpl = slot.get("template")
+    return (tpl.get("role_description") or "-")[:24] if tpl else "-"
+
+
+def _slot_to_agent_payload(slot: dict) -> dict:
+    item: dict = {}
+    if slot["source"] == "template":
+        item["template_id"] = slot["template"]["id"]
+        for key in ("agent_name", "role_description", "focus_area", "tone", "extra_notes"):
+            if slot.get(key):
+                item[key] = slot[key]
+    else:
+        item["agent_name"] = slot["agent_name"]
+        item["role_description"] = slot["role_description"]
+        for key in ("focus_area", "tone", "extra_notes"):
+            if slot.get(key):
+                item[key] = slot[key]
+    if slot.get("stance"):
+        item["stance"] = slot["stance"]
+    return item
+
+
 async def scene_create_task(client: APIClient):
     """创建决策任务"""
     print_section("创建决策任务")
@@ -276,6 +624,9 @@ async def scene_create_task(client: APIClient):
         error("问题不能为空")
         return
 
+    console.print(Panel(CONTEXT_NOTES_GUIDE, title="背景说明（可选）", border_style="dim"))
+    context_notes = Prompt.ask("\n  背景说明", default="").strip() or None
+
     # --- 选择模式 ---
     console.print(f"\n[bold]Step 2:[/] 选择决策模式")
     for key, (mode, name, desc) in DECISION_MODES.items():
@@ -283,8 +634,7 @@ async def scene_create_task(client: APIClient):
     mode_choice = Prompt.ask("  选择", choices=list(DECISION_MODES.keys()), default="1")
     mode_key, mode_name, _ = DECISION_MODES[mode_choice]
 
-    # --- 选择模板 ---
-    console.print(f"\n[bold]Step 3:[/] 选择 Agent 模板组合")
+    console.print(f"\n[bold]Step 3:[/] 配置 Agent 人设（模板 / 自定义 / 模板微调）")
     with Status("[cyan]加载模板...", spinner="dots"):
         templates = await client.get_templates()
 
@@ -311,56 +661,219 @@ async def scene_create_task(client: APIClient):
         )
     console.print(tpl_table)
 
-    # 选择 Agent
-    agent_count = IntPrompt.ask("  选择几个 Agent", choices=["2", "3", "4", "5"], default=3)
-    selected_agents = []
-    for idx in range(agent_count):
-        while True:
-            num = IntPrompt.ask(f"  Agent {idx + 1}: 选择模板编号", default=1)
-            if 1 <= num <= len(templates):
-                selected_agents.append(templates[num - 1])
-                info(f"已选: {templates[num - 1]['name']}")
-                break
-            else:
-                error(f"请输入 1-{len(templates)}")
+    agent_count = _pick_agent_count(mode_key)
 
-    # --- 确认并提交 ---
+    console.print("\n  [bold]人设配置方式[/]")
+    console.print("    [1] 系统推荐（根据决策问题自动匹配专家组合）")
+    console.print("    [2] 手动逐个配置（自选模板 / 自定义 / 微调）")
+    setup = Prompt.ask("  选择", choices=["1", "2"], default="1")
+
+    selected_slots: list[dict] | None = None
+    if setup == "1":
+        selected_slots = await _slots_from_recommendation(
+            client, question, mode_key, agent_count, templates
+        )
+        if selected_slots is None and not Confirm.ask(
+            "未采用推荐，是否改用手动配置?", default=True
+        ):
+            info("已取消")
+            return
+
+    if not selected_slots:
+        selected_slots = []
+        for idx in range(agent_count):
+            selected_slots.append(
+                _configure_agent_slot(templates, idx, mode_key=mode_key)
+            )
+
+    if mode_key == "debate" and not _validate_debate_slots(selected_slots):
+        return
+
     console.print()
-    summary = Table(box=box.SIMPLE, show_header=False)
-    summary.add_column("项目", style="dim", width=16)
-    summary.add_column("内容")
-    summary.add_row("决策问题", question)
-    summary.add_row("决策模式", mode_name)
-    summary.add_row("Agent 组合", " → ".join(a["name"] for a in selected_agents))
-    console.print(Panel(summary, title="任务摘要", border_style="cyan"))
+    summary = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    summary.add_column("名称", width=16)
+    summary.add_column("来源", width=8)
+    summary.add_column("立场", width=8)
+    summary.add_column("角色/背景", width=28)
+    for slot in selected_slots:
+        src = "自定义" if slot["source"] == "custom" else "模板"
+        summary.add_row(
+            _slot_display_name(slot),
+            src,
+            STANCE_LABEL_MAP.get(slot.get("stance"), "-"),
+            _slot_display_role(slot),
+        )
+    console.print(Panel(summary, title=f"任务摘要 · {mode_name}", border_style="cyan"))
+    summary2 = Table(box=box.SIMPLE, show_header=False)
+    summary2.add_column("项目", style="dim", width=16)
+    summary2.add_column("内容")
+    summary2.add_row("决策问题", question)
+    if context_notes:
+        summary2.add_row("背景说明", context_notes[:80])
+    console.print(summary2)
 
     if not confirm("确认提交?"):
         info("已取消")
         return
 
-    # 构造请求
-    agents_payload = [
-        {
-            "agent_name": a["name"],
-            "role_description": a.get("role_description", ""),
-            "focus_area": a.get("focus_area", ""),
-            "tone": a.get("tone", ""),
-        }
-        for a in selected_agents
-    ]
+    agents_payload = [_slot_to_agent_payload(s) for s in selected_slots]
+
+    use_legacy = Confirm.ask("跳过讨论室、直接后台分析?", default=False)
 
     with Status("[cyan]正在提交任务...", spinner="dots"):
-        result = await client.create_task(question, mode_key, agents_payload)
+        result = await client.create_task(
+            question,
+            mode_key,
+            agents_payload,
+            context_notes=context_notes,
+            legacy_auto_finalize=use_legacy,
+        )
 
     if "error" in result:
         error(f"创建失败: {result['error'][:200]}")
         return
 
     task_id = result["task_id"]
-    success(f"任务已提交 (ID: {task_id})")
+    success(f"任务已创建 (ID: {task_id}) status={result.get('status')}")
 
-    # --- 轮询状态 ---
+    if use_legacy or result.get("status") == "pending":
+        await scene_poll_status(client, task_id)
+        return
+
+    await scene_discussion(client, task_id, is_debate=(mode_key == "debate"))
     await scene_poll_status(client, task_id)
+
+
+STANCE_PANEL_STYLE = {
+    "pro": "green",
+    "con": "red",
+    "judge": "yellow",
+    "neutral": "cyan",
+}
+
+
+def _print_agent_message(am: dict) -> None:
+    title = am.get("agent_display_name") or am.get("agent_name") or "Agent"
+    stance = am.get("stance") or "neutral"
+    label = am.get("stance_label", "")
+    if label and label not in title:
+        title = f"{title}"
+    style = STANCE_PANEL_STYLE.get(stance, "white")
+    console.print(Panel(am.get("content", ""), title=title, border_style=style))
+
+
+async def scene_discussion(client: APIClient, task_id: int, *, is_debate: bool = False):
+    """讨论室：用户多轮交流后收束。"""
+    print_section(f"任务 {task_id} 讨论室")
+
+    if is_debate:
+        roster = await client.get_debate_roster(task_id)
+        if roster:
+            rt = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+            rt.add_column("ID", width=4)
+            rt.add_column("辩手", width=28)
+            rt.add_column("立场", width=8)
+            rt.add_column("背景", width=24)
+            for r in roster:
+                rt.add_row(
+                    str(r.get("task_agent_id", "")),
+                    r.get("agent_display_name", r.get("agent_name", "")),
+                    r.get("stance_label", "-"),
+                    (r.get("role_description") or "-")[:22],
+                )
+            console.print(Panel(rt, title="辩手席位", border_style="magenta"))
+        info("每轮交锋后可选择：补充发言 / 辩手继续交锋 / 结束并生成正式分析")
+
+    if is_debate:
+        await _debate_discussion_loop(client, task_id)
+        return
+
+    roster = await client.get_debate_roster(task_id)
+    if roster:
+        rt = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+        rt.add_column("ID", width=4)
+        rt.add_column("专家", width=28)
+        rt.add_column("背景", width=36)
+        for r in roster:
+            rt.add_row(
+                str(r.get("task_agent_id", "")),
+                r.get("agent_display_name", r.get("agent_name", "")),
+                (r.get("role_description") or "-")[:34],
+            )
+        console.print(Panel(rt, title="讨论专家", border_style="cyan"))
+
+    info("发言将发送给全部专家，每人各回复一条；直接回车结束并生成正式分析")
+    while True:
+        content = Prompt.ask("\n  [你/决策方]", default="").strip()
+        if not content:
+            break
+        with Status("[cyan]全体专家思考中...", spinner="dots"):
+            resp = await client.post_message(task_id, content, reply_scope="all_brief")
+        if "error" in resp:
+            error(str(resp["error"])[:300])
+            continue
+        for am in resp.get("agent_messages", []):
+            _print_agent_message(am)
+
+    await _finalize_task(client, task_id)
+
+
+async def _finalize_task(client: APIClient, task_id: int):
+    with Status("[cyan]正在生成正式分析（含讨论纪要）...", spinner="dots"):
+        fin = await client.finalize_task(task_id)
+    if "error" in fin:
+        error(f"收束失败: {fin['error'][:200]}")
+    else:
+        success(f"已进入收束: {fin.get('status')}")
+
+
+async def _debate_discussion_loop(client: APIClient, task_id: int):
+    """辩论模式：每轮交锋后由用户选择下一步。"""
+    while True:
+        console.print()
+        console.print("[bold]本轮结束后，请选择：[/]")
+        console.print("  [1] 我补充发言（触发：支持方→反对方→评审）")
+        console.print("  [2] 我不说话，让辩手继续交锋一轮")
+        console.print("  [3] 结束讨论，生成正式分析报告")
+        choice = Prompt.ask("  选择", choices=["1", "2", "3"], default="1")
+
+        if choice == "3":
+            await _finalize_task(client, task_id)
+            return
+
+        if choice == "2":
+            with Status("[cyan]辩手自由交锋中（支持→反对→评审）...", spinner="dots"):
+                resp = await client.debate_agent_exchange(task_id)
+            if "error" in resp:
+                error(str(resp["error"])[:300])
+                continue
+            if resp.get("system_message"):
+                console.print(
+                    Panel(
+                        resp["system_message"].get("content", ""),
+                        title="系统",
+                        border_style="dim",
+                    )
+                )
+            info(f"辩手自主交锋第 {resp.get('debate_exchange_round', '?')} 轮完成")
+            for am in resp.get("agent_messages", []):
+                _print_agent_message(am)
+            continue
+
+        content = Prompt.ask("\n  [你/决策方] 补充发言", default="").strip()
+        if not content:
+            info("未输入内容，请重新选择")
+            continue
+        with Status("[cyan]辩手交锋中（支持→反对→评审）...", spinner="dots"):
+            resp = await client.post_message(
+                task_id, content, reply_scope="debate_round"
+            )
+        if "error" in resp:
+            error(str(resp["error"])[:300])
+            continue
+        info("本轮顺序：支持方 → 反对方反驳 → 评审归纳")
+        for am in resp.get("agent_messages", []):
+            _print_agent_message(am)
 
 
 async def scene_poll_status(client: APIClient, task_id: int):
@@ -370,6 +883,8 @@ async def scene_poll_status(client: APIClient, task_id: int):
 
     status_map = {
         "pending": ("⏳", "yellow"),
+        "discussing": ("💬", "blue"),
+        "finalizing": ("📝", "magenta"),
         "processing": ("🔄", "cyan"),
         "completed": ("✅", "green"),
         "failed": ("❌", "red"),
@@ -395,7 +910,12 @@ async def scene_poll_status(client: APIClient, task_id: int):
                             f"— 任务 {task_id}",
             )
 
-            if s["status"] == "completed":
+            if s["status"] in ("discussing",):
+                progress.update(
+                    task_progress,
+                    description=f"[blue]💬 DISCUSSING — 请先在讨论室交流[/]",
+                )
+            elif s["status"] == "completed":
                 progress.stop()
                 success("分析完成!")
                 await scene_view_result(client, task_id)

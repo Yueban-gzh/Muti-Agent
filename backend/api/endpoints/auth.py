@@ -20,6 +20,8 @@ from core.security import get_password_hash, verify_password, create_access_toke
 from db.database import get_db
 from db.models import User
 from schemas.user import UserCreate, UserResponse, Token
+from services.log_constants import USER_LOGIN, USER_REGISTER
+from services.log_service import append_log
 
 # ============================================================================
 # 路由初始化
@@ -88,9 +90,14 @@ async def register(
 
     db.add(new_user)
     await db.commit()
-    await db.refresh(new_user)  # 刷新以获取自动生成的 id 和 created_at
+    await db.refresh(new_user)
 
-    # --- 第 3 步：返回用户信息 ---
+    await append_log(
+        USER_REGISTER,
+        f"用户 {new_user.username} 注册成功",
+        user_id=new_user.id,
+    )
+
     return UserResponse.model_validate(new_user)
 
 
@@ -150,7 +157,12 @@ async def login(
         data={"sub": user.username, "role": user.role}
     )
 
-    # --- 第 4 步：返回 Token ---
+    await append_log(
+        USER_LOGIN,
+        f"用户 {user.username} 登录",
+        user_id=user.id,
+    )
+
     return {"access_token": access_token, "token_type": "bearer"}
 
 

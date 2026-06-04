@@ -59,6 +59,8 @@ async def generate_final_summary(
     weight_config: Optional[str] = None,
     agent_name_map: Optional[dict[int, str]] = None,
     weighted_ranking: Optional[list[dict]] = None,
+    task_id: Optional[int] = None,
+    discussion_summary: Optional[str] = None,
 ) -> dict:
     """
     调用大模型生成最终综合建议。
@@ -91,6 +93,14 @@ async def generate_final_summary(
 
     if weight_config:
         user_message_parts.append(f"【用户权重配置】\n{weight_config}")
+
+    if discussion_summary:
+        user_message_parts.append("\n" + "=" * 60)
+        user_message_parts.append("【讨论纪要（用户与专家交流摘要）】")
+        text = discussion_summary
+        if len(text) > 4000:
+            text = text[:4000] + "\n...[已截断]..."
+        user_message_parts.append(text)
 
     # --- 汇总各 Agent 的输出 ---
     user_message_parts.append("\n" + "=" * 60)
@@ -145,6 +155,8 @@ async def generate_final_summary(
         user_message,
         temperature=0.5,
         max_new_tokens=2048,
+        task_id=task_id,
+        label="summary",
     )
 
     if result["success"] and result["text"]:

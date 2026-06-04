@@ -14,13 +14,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.dependencies import get_current_user
 from db.database import get_db
 from db.models import User, AgentTemplate
+from schemas.discussion import TemplateRecommendRequest, TemplateRecommendResponse
 from schemas.template import TemplateResponse, TemplateListResponse
+from services.agent_recommender import recommend_agents
+from services.exceptions import ServiceError
+from api.http_utils import service_error_to_http
 
 # ============================================================================
 # 路由初始化
 # ============================================================================
 
 router = APIRouter(prefix="/api/templates", tags=["Agent 模板"])
+
+
+@router.post(
+    "/recommend",
+    response_model=TemplateRecommendResponse,
+    summary="根据问题推荐 Agent 组合",
+)
+async def recommend_template_agents(
+    body: TemplateRecommendRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    result = await recommend_agents(
+        db, body.question, body.decision_mode, body.agent_count
+    )
+    return {
+        "matched_rule_id": result.matched_rule_id,
+        "hint": result.hint,
+        "agents": result.agents,
+    }
 
 
 # ============================================================================
@@ -48,7 +72,7 @@ async def get_templates(
     result = await db.execute(
         select(AgentTemplate)
         .where(AgentTemplate.is_active == 1)
-        .order_by(AgentTemplate.id)
+        .order_by(AgentTemplate.sort_order, AgentTemplate.id)
     )
     templates = result.scalars().all()
 
@@ -87,7 +111,7 @@ async def get_all_templates(
         result = await db.execute(
             select(AgentTemplate)
             .where(AgentTemplate.is_active == 1)
-            .order_by(AgentTemplate.id)
+            .order_by(AgentTemplate.sort_order, AgentTemplate.id)
         )
 
     templates = result.scalars().all()

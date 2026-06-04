@@ -21,8 +21,13 @@ from api.endpoints.history import router as history_router
 from api.endpoints.templates import router as templates_router
 from api.endpoints.admin import router as admin_router
 from core.config import APP_TITLE, APP_VERSION, DATABASE_URL, LLM_BACKEND
+from core.logging_config import setup_logging
 from db.database import engine, Base, AsyncSessionLocal
 from db.init_data import seed_default_data
+from services.task_runner import init_task_runner
+
+# 运行日志：终端 + logs/app.log（启动时立即配置）
+setup_logging()
 
 # ============================================================================
 # 应用生命周期管理
@@ -43,26 +48,46 @@ async def lifespan(app: FastAPI):
     # --- 启动阶段：初始化数据库表 ---
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # 启用 SQLite WAL 模式以支持更好的并发读写性能
+        from db.migrate import run_schema_migrations
+
+        await conn.run_sync(run_schema_migrations)
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
     print(f"[启动] 数据库表初始化完成（{DATABASE_URL}）")
 
     if LLM_BACKEND == "local":
         from ai.llm.local_client import preload_local_model
+        from services.log_constants import LLM_LOAD_FAILED
+        from services.log_service import append_log
 
         print("[启动] 正在预加载本地 LLM 模型（首次约 1~3 分钟）...")
-        await asyncio.to_thread(preload_local_model)
-        print("[启动] 本地 LLM 模型已就绪")
+        try:
+            await asyncio.to_thread(preload_local_model)
+            print("[启动] 本地 LLM 模型已就绪")
+        except Exception as e:
+            print(f"[启动] 本地 LLM 模型加载失败: {e}")
+            await append_log(
+                LLM_LOAD_FAILED,
+                f"启动时本地模型加载失败: {str(e)[:500]}",
+            )
+            raise
 
     # --- 插入默认数据（管理员 + 预设模板） ---
     async with AsyncSessionLocal() as session:
         await seed_default_data(session)
+
+    # --- 启动任务调度器 ---
+    runner = init_task_runner()
+    app.state.task_runner = runner
+    recovered = await runner.recover_stale_tasks()
+    await runner.start()
+    print(f"[启动] TaskRunner 就绪，恢复中断任务 {recovered} 个")
 
     print(f"[启动] {APP_TITLE} v{APP_VERSION} 已就绪")
 
     yield  # 应用运行期间在此处挂起
 
     # --- 关闭阶段：释放资源 ---
+    await runner.stop()
     await engine.dispose()
     print("[关闭] 数据库引擎已释放")
 

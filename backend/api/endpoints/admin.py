@@ -33,6 +33,8 @@ from schemas.template import (
     TemplateUpdate,
     TemplateResponse,
 )
+from services.llm_scheduler import get_llm_stats
+from services.task_runner import get_task_runner
 
 # ============================================================================
 # 路由初始化
@@ -128,6 +130,7 @@ async def get_admin_stats(
         - 任务总数、完成数、失败数
         - 反馈采纳比例
         - 模板数量
+        - 任务队列与 LLM 槽位运行时指标
     """
     # --- 用户统计 ---
     total_users_result = await db.execute(select(func.count(User.id)))
@@ -187,6 +190,9 @@ async def get_admin_stats(
     )
     active_templates = active_tpl_result.scalar() or 0
 
+    runner_stats = get_task_runner().stats()
+    llm_stats = get_llm_stats()
+
     return AdminStatsResponse(
         total_users=total_users,
         total_admin_users=total_admin_users,
@@ -200,6 +206,12 @@ async def get_admin_stats(
         none_adoption_count=none_adoption_count,
         total_templates=total_templates,
         active_templates=active_templates,
+        task_queue_depth=runner_stats.queue_depth,
+        pipeline_active=runner_stats.pipeline_active,
+        pipeline_max=runner_stats.pipeline_max,
+        llm_active=llm_stats.active,
+        llm_max=llm_stats.max_concurrent,
+        llm_available_slots=llm_stats.available_slots,
     )
 
 

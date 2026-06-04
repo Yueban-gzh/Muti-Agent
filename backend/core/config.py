@@ -111,5 +111,54 @@ _default_model_path = os.path.join(
 LOCAL_MODEL_PATH: str = os.getenv("LOCAL_MODEL_PATH", _default_model_path)
 LOCAL_MAX_NEW_TOKENS: int = int(os.getenv("LOCAL_MAX_NEW_TOKENS", "2048"))
 LOCAL_TEMPERATURE: float = float(os.getenv("LOCAL_TEMPERATURE", "0.7"))
-# 同时进行的本地生成数（3090 上 2 路较稳）
-LOCAL_MAX_CONCURRENT: int = int(os.getenv("LOCAL_MAX_CONCURRENT", "2"))
+
+# ============================================================================
+# 并发控制（任务队列 + 全局 LLM 槽位）
+# ============================================================================
+
+# 全局 LLM 槽位（Agent + 综合建议 + local/api 共用）
+LLM_MAX_CONCURRENT: int = int(os.getenv("LLM_MAX_CONCURRENT", "2"))
+
+# 兼容旧配置名
+_legacy_local = os.getenv("LOCAL_MAX_CONCURRENT")
+if _legacy_local and not os.getenv("LLM_MAX_CONCURRENT"):
+    LLM_MAX_CONCURRENT = int(_legacy_local)
+
+# 同时执行的完整流水线数
+MAX_CONCURRENT_PIPELINES: int = int(os.getenv("MAX_CONCURRENT_PIPELINES", "3"))
+
+# 任务队列上限，0 = 不限制
+TASK_QUEUE_MAX_DEPTH: int = int(os.getenv("TASK_QUEUE_MAX_DEPTH", "0"))
+
+# LOCAL_MAX_CONCURRENT 保留为别名，供旧文档引用
+LOCAL_MAX_CONCURRENT: int = LLM_MAX_CONCURRENT
+
+# ============================================================================
+# 运行日志（文件持久化，见 core/logging_config.py）
+# ============================================================================
+
+LOG_DIR: str = os.getenv("LOG_DIR", os.path.join(PROJECT_ROOT, "logs")).replace("\\", "/")
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FILE_MAX_MB: int = int(os.getenv("LOG_FILE_MAX_MB", "10"))
+LOG_FILE_BACKUP_COUNT: int = int(os.getenv("LOG_FILE_BACKUP_COUNT", "5"))
+
+# ============================================================================
+# 讨论期 → 收束期
+# ============================================================================
+
+MAX_DISCUSSION_USER_TURNS: int = int(os.getenv("MAX_DISCUSSION_USER_TURNS", "30"))
+MAX_USER_MESSAGE_CHARS: int = int(os.getenv("MAX_USER_MESSAGE_CHARS", "500"))
+DISCUSS_MAX_NEW_TOKENS: int = int(os.getenv("DISCUSS_MAX_NEW_TOKENS", "512"))
+DISCUSS_HISTORY_MAX_MESSAGES: int = int(os.getenv("DISCUSS_HISTORY_MAX_MESSAGES", "12"))
+
+DISCUSSION_SUMMARY_TARGET_CHARS: int = int(os.getenv("DISCUSSION_SUMMARY_TARGET_CHARS", "800"))
+DISCUSSION_SUMMARY_MAX_NEW_TOKENS: int = int(os.getenv("DISCUSSION_SUMMARY_MAX_NEW_TOKENS", "1024"))
+DISCUSS_INPUT_MAX_CHARS: int = int(os.getenv("DISCUSS_INPUT_MAX_CHARS", "12000"))
+SUMMARY_LLM_TEMPERATURE: float = float(os.getenv("SUMMARY_LLM_TEMPERATURE", "0.3"))
+
+DEBATE_REQUIRE_PRO_CON: bool = os.getenv("DEBATE_REQUIRE_PRO_CON", "1").strip() in ("1", "true", "yes")
+DEBATE_MAX_JUDGE: int = int(os.getenv("DEBATE_MAX_JUDGE", "1"))
+MAX_DEBATE_EXCHANGE_ROUNDS: int = int(os.getenv("MAX_DEBATE_EXCHANGE_ROUNDS", "15"))
+
+# 创建任务后自动跑旧版一次性流水线（兼容 CLI 联调）
+LEGACY_AUTO_FINALIZE: bool = os.getenv("LEGACY_AUTO_FINALIZE", "0").strip() in ("1", "true", "yes")
