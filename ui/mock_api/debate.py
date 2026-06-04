@@ -69,16 +69,17 @@ def create_task(data: Dict[str, Any], user_id: int) -> Dict[str, Any]:
         "decision_mode": data["decision_mode"],
         "agent_count": data["agent_count"],
         "weight_config": data.get("weight_config"),
-        "status": "pending",
+        "status": "discussing",   # 改为 discussing，不再是 pending
         "error_message": None,
         "created_at": _utcnow_iso(),
-        "agents": data["agents"]
+        "agents": data["agents"],
+        "discussion_messages": []   # 可选，初始为空列表
     }
     _mock_tasks_db[task_id] = task
     return {
         "task_id": task_id,
-        "status": "pending",
-        "message": "任务已提交，正在后台处理"
+        "status": "discussing",
+        "message": "任务已创建，进入讨论室"
     }
 
 def get_task_status(task_id: int) -> Optional[Dict[str, Any]]:
@@ -177,4 +178,118 @@ def get_task_result(task_id: int) -> Optional[Dict[str, Any]]:
         "similarities": similarities,
         "conflicts": conflicts,
         "weighted_ranking": weighted_ranking
+    }
+# 在现有基础上添加以下内容
+
+def _create_mock_messages(task_id, agents):
+    """生成模拟的初始消息（系统提示）"""
+    return [
+        {
+            "seq": 1,
+            "role": "system",
+            "content": "讨论开始。你可以随时发言，输入你的观点。",
+            "created_at": _utcnow_iso()
+        }
+    ]
+
+def get_messages(task_id: int) -> list:
+    """GET /api/tasks/{task_id}/messages"""
+    task = _mock_tasks_db.get(task_id)
+    if not task:
+        return []
+    return task.get("discussion_messages", [])
+
+def send_message(task_id: int, user_id: int, content: str, reply_scope: str) -> dict:
+    """POST /api/tasks/{task_id}/messages"""
+    task = _mock_tasks_db.get(task_id)
+    if not task:
+        return {"error": "Task not found"}
+    # 添加用户消息
+    messages = task.setdefault("discussion_messages", [])
+    seq = len(messages) + 1
+    user_msg = {
+        "seq": seq,
+        "role": "user",
+        "content": content,
+        "reply_scope": reply_scope,
+        "created_at": _utcnow_iso()
+    }
+    messages.append(user_msg)
+    
+    # 模拟 Agent 回复（每个 Agent 一条简短回复）
+    agents = task.get("agents", [])
+    for agent in agents:
+        seq += 1
+        agent_msg = {
+            "seq": seq,
+            "role": "agent",
+            "task_agent_id": agent.get("id", 1),  # 简化，实际 id 从数据库来
+            "agent_name": agent.get("agent_name", "专家"),
+            "content": f"这是 {agent.get('agent_name')} 对「{content}」的模拟回复。",
+            "reply_scope": reply_scope,
+            "created_at": _utcnow_iso()
+        }
+        messages.append(agent_msg)
+    task["discussion_messages"] = messages
+    return {"status": "ok"}
+
+def agent_exchange(task_id: int) -> dict:
+    """POST /api/tasks/{task_id}/debate/agent-exchange"""
+    task = _mock_tasks_db.get(task_id)
+    if not task:
+        return {"error": "Task not found"}
+    # 模拟一次交锋：添加一条系统消息和几个 Agent 的辩论回复
+    messages = task.setdefault("discussion_messages", [])
+    seq = len(messages) + 1
+    # 添加一个系统提示
+    sys_msg = {
+        "seq": seq,
+        "role": "system",
+        "content": "辩手们开始自主交锋...",
+        "created_at": _utcnow_iso()
+    }
+    messages.append(sys_msg)
+    seq += 1
+    agents = task.get("agents", [])
+    for agent in agents:
+        agent_msg = {
+            "seq": seq,
+            "role": "agent",
+            "task_agent_id": agent.get("id", 1),
+            "agent_name": agent.get("agent_name", "专家"),
+            "content": f"（交锋）{agent.get('agent_name')} 补充观点：我认为现有讨论中还有一点需要注意...",
+            "reply_scope": "agent_exchange",
+            "created_at": _utcnow_iso()
+        }
+        messages.append(agent_msg)
+        seq += 1
+    task["discussion_messages"] = messages
+    return {"status": "ok"}
+
+def finalize_task(task_id: int) -> dict:
+    """POST /api/tasks/{task_id}/finalize"""
+    task = _mock_tasks_db.get(task_id)
+    if not task:
+        return {"error": "Task not found"}
+    # 改变状态为 finalizing，然后模拟生成报告
+    task["status"] = "finalizing"
+    # 调用内部生成结果（复用已有逻辑）
+    # 注意：原有 get_task_result 会返回最终报告，但需要等待 completed
+    # 这里我们模拟异步，直接标记完成（mock 中可立即完成）
+    task["status"] = "completed"
+    # 生成最终报告（调用原有逻辑）
+    result = get_task_result(task_id)
+    task["final_result"] = result
+    return {"task_id": task_id, "status": "completed"}
+
+def get_task_status(task_id: int):
+    """返回状态时增加 discussion_messages 计数等（可选）"""
+    task = _mock_tasks_db.get(task_id)
+    if not task:
+        return None
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "discussion_turns": len(task.get("discussion_messages", [])) // 2,  # 粗略
+        "debate_exchange_rounds": 0  # 模拟，暂不实现
     }

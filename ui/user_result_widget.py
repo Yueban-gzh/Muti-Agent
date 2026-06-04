@@ -9,11 +9,12 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt
 
 class UserResultWidget(QWidget):
-    def __init__(self, user_info, api_client, stack):
+    def __init__(self, user_info, api_client, stack, history_widget=None):
         super().__init__()
         self.user_info = user_info
         self.api = api_client
         self.stack = stack
+        self.history_widget = history_widget   # 新增
         self.current_task_id = None
         self.init_ui()
 
@@ -27,10 +28,21 @@ class UserResultWidget(QWidget):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
+        # 水平按钮栏
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.back_btn = QPushButton("返回历史")
+        self.back_btn.clicked.connect(self.go_back_to_history)
+        self.back_btn.setVisible(False)
+        btn_layout.addWidget(self.back_btn)
         self.export_btn = QPushButton("导出报告")
         self.export_btn.clicked.connect(self.export_report)
         self.export_btn.setVisible(False)
-        layout.addWidget(self.export_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        btn_layout.addWidget(self.export_btn)
+
+
+
+        layout.addLayout(btn_layout)
 
         self.feedback_group = QGroupBox("您的反馈")
         feedback_layout = QVBoxLayout()
@@ -66,6 +78,16 @@ class UserResultWidget(QWidget):
         layout.addWidget(self.feedback_group)
 
         self.setLayout(layout)
+    def go_back_to_history(self):
+        if self.history_widget:
+            self.stack.setCurrentWidget(self.history_widget)
+        else:
+            # 降级方案：遍历查找 UserHistoryWidget
+            for i in range(self.stack.count()):
+                widget = self.stack.widget(i)
+                if widget.__class__.__name__ == "UserHistoryWidget":
+                    self.stack.setCurrentWidget(widget)
+                    break
 
     def load_result(self, task_id, result_data, show_export=False):
         self.current_task_id = task_id
@@ -73,10 +95,11 @@ class UserResultWidget(QWidget):
         self.feedback_group.setVisible(True)
         self.submit_feedback_btn.setEnabled(True)
         self.export_btn.setVisible(show_export)
+        self.back_btn.setVisible(False)   # 新建任务时不显示返回
         self.comment_edit.clear()
         agents = result_data.get("agents", [])
         self.update_agent_list(agents)
-        self.chosen_type_combo.setCurrentIndex(1)  # 默认“采纳综合建议”
+        self.chosen_type_combo.setCurrentIndex(1)
         self.on_chosen_type_changed(1)
 
     def load_history_result(self, task_id, result_data, show_export=True):
@@ -84,6 +107,7 @@ class UserResultWidget(QWidget):
         self._show_result_data(result_data)
         self.feedback_group.setVisible(False)
         self.export_btn.setVisible(show_export)
+        self.back_btn.setVisible(True)    # 历史结果显示返回按钮
 
     def _show_result_data(self, result_data):
         while self.tabs.count():

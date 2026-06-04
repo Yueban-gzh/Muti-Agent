@@ -1,4 +1,8 @@
 import random
+from PyQt6.QtWidgets import QLineEdit, QPushButton
+from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt
+import os
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QTabWidget, QGraphicsDropShadowEffect)
 from PyQt6.QtCore import Qt, QTimer, QPointF
@@ -6,6 +10,56 @@ from PyQt6.QtGui import QColor, QPainter, QLinearGradient, QBrush, QPen, QFont
 from ui.config import USE_REAL_API
 from ui.real_api.client import RealAPI
 from ui.mock_api.client import MockAPI
+
+class PasswordLineEdit(QLineEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setEchoMode(QLineEdit.EchoMode.Password)
+        self.setPlaceholderText("密码")
+        # 预留右侧空间给图标按钮
+        self.setStyleSheet("QLineEdit { padding-right: 32px; }")
+        
+        # 获取图标文件的绝对路径（根据你的实际存放位置调整）
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.icon_open = QIcon(os.path.join(base_dir, "resources", "open_eye.png"))
+        self.icon_closed = QIcon(os.path.join(base_dir, "resources", "closed_eye.png"))
+        
+        # 创建切换按钮
+        self.toggle_btn = QPushButton(self)
+        self.toggle_btn.setIcon(self.icon_closed)  # 初始为闭眼（隐藏密码）
+        self.toggle_btn.setFixedSize(24, 24)
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_btn.setStyleSheet("""
+            QPushButton {
+                border: none;
+                background: transparent;
+            }
+            QPushButton:hover {
+                background-color: rgba(100, 100, 100, 0.2);
+                border-radius: 12px;
+            }
+        """)
+        self.toggle_btn.clicked.connect(self.toggle_visibility)
+        self._password_visible = False
+
+    def resizeEvent(self, event):
+        """当输入框大小改变时，将按钮定位到右侧中央"""
+        super().resizeEvent(event)
+        btn_width = self.toggle_btn.width()
+        btn_height = self.toggle_btn.height()
+        x = self.width() - btn_width - 4  # 距离右边框4像素
+        y = (self.height() - btn_height) // 2
+        self.toggle_btn.move(x, y)
+
+    def toggle_visibility(self):
+        if self._password_visible:
+            self.setEchoMode(QLineEdit.EchoMode.Password)
+            self.toggle_btn.setIcon(self.icon_closed)
+            self._password_visible = False
+        else:
+            self.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.toggle_btn.setIcon(self.icon_open)
+            self._password_visible = True
 
 # ==================== 左侧：动态科技感粒子背景控件 ====================
 class TechGraphicsWidget(QWidget):
@@ -139,9 +193,9 @@ class LoginWidget(QWidget):
         self.login_username.setPlaceholderText("请输入用户名")
         self.login_username.setObjectName("login_username")
         
-        self.login_password = QLineEdit()
+        self.login_password = PasswordLineEdit()
         self.login_password.setPlaceholderText("请输入密码")
-        self.login_password.setEchoMode(QLineEdit.EchoMode.Password)
+        
         self.login_password.setObjectName("login_password")
         
         self.login_btn = QPushButton("进入决策核心")
@@ -168,12 +222,12 @@ class LoginWidget(QWidget):
         
         self.reg_username = QLineEdit()
         self.reg_username.setPlaceholderText("设定登录用户名")
-        self.reg_password = QLineEdit()
+        self.reg_password = PasswordLineEdit()
         self.reg_password.setPlaceholderText("强密码（英文字母+数字）")
-        self.reg_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.reg_confirm = QLineEdit()
+        
+        self.reg_confirm = PasswordLineEdit()
         self.reg_confirm.setPlaceholderText("请再次输入密码")
-        self.reg_confirm.setEchoMode(QLineEdit.EchoMode.Password)
+        
         self.reg_email = QLineEdit()
         self.reg_email.setPlaceholderText("用于安全密钥找回（可选）")
         

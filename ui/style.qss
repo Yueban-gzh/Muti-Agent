@@ -1,7 +1,7 @@
 /* ========== 全局基础（暗金奢华但清晰） ========== */
 QWidget {
     color: #e2e8f0;
-    font-family: "SF Pro Display", "-apple-system", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: "Microsoft YaHei", "SimHei", "PingFang SC", "sans-serif";
     font-size: 13px;
 }
 

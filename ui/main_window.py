@@ -23,15 +23,18 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(self.stack)
         else:
             # 普通用户：创建页面
+            # 在 MainWindow.__init__ 的普通用户部分
             self.result_widget = UserResultWidget(user_info, self.api, self.stack)
             self.history_widget = UserHistoryWidget(user_info, self.api, self.stack, self.result_widget)
             self.home_widget = UserHomeWidget(user_info, self.api, self.stack, self.result_widget)
-            
+            # 补充 result_widget 的 history 引用
+            self.result_widget.history_widget = self.history_widget
+        
             self.stack.addWidget(self.home_widget)
             self.stack.addWidget(self.result_widget)
             self.stack.addWidget(self.history_widget)
             self.stack.setCurrentWidget(self.home_widget)
-            
+        
             self.setup_navbar()
     
     def setup_navbar(self):

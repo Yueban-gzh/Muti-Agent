@@ -6,7 +6,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTableWidget,
                              QTableWidgetItem, QPushButton, QHBoxLayout, QLabel, QHeaderView,
                              QFileDialog, QMessageBox, QDialog, QFormLayout, QLineEdit, QTextEdit,
-                             QComboBox, QDialogButtonBox, QTextBrowser, QSizePolicy)
+                             QComboBox, QDialogButtonBox, QTextBrowser, QSizePolicy,QGridLayout)
 from PyQt6.QtCore import Qt
 
 class AdminWidget(QWidget):
@@ -61,14 +61,23 @@ class AdminWidget(QWidget):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
+        # 任务管理标签页
         self.task_tab = QWidget()
         self.init_task_tab()
         self.tabs.addTab(self.task_tab, "用户与任务管理")
 
+        # ========== 新增：用户管理标签页 ==========
+        self.user_tab = QWidget()
+        self.init_user_tab()
+        self.tabs.addTab(self.user_tab, "用户管理")
+        # =====================================
+
+        # Agent模板管理标签页
         self.template_tab = QWidget()
         self.init_template_tab()
         self.tabs.addTab(self.template_tab, "Agent模板管理")
 
+        # 反馈统计与系统日志
         self.stats_tab = QWidget()
         self.init_stats_tab()
         self.tabs.addTab(self.stats_tab, "反馈统计与系统日志")
@@ -86,6 +95,7 @@ class AdminWidget(QWidget):
         self.task_table.setHorizontalHeaderLabels(["任务ID", "用户ID", "决策问题", "创建时间", "状态", "操作"])
         self.task_table.setAlternatingRowColors(True)
         self.task_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.task_table.verticalHeader().setDefaultSectionSize(40)
         layout.addWidget(self.task_table)
 
         btn_layout = QHBoxLayout()
@@ -106,26 +116,87 @@ class AdminWidget(QWidget):
         for row, task in enumerate(tasks):
             self.task_table.setItem(row, 0, self._create_center_item(str(task["id"])))
             self.task_table.setItem(row, 1, self._create_center_item(str(task["user_id"])))
-            self.task_table.setItem(row, 2, QTableWidgetItem(task["question"]))
+            self.task_table.setItem(row, 2, self._create_center_item(task["question"]))
             self.task_table.setItem(row, 3, self._create_center_item(task["created_at"]))
-            
-            status_item = self._create_center_item(task["status"])
-            if task["status"] == "completed":
+
+            status = task.get("status", "")
+            status_item = self._create_center_item(status)
+            if status == "completed":
                 status_item.setForeground(Qt.GlobalColor.green)
-            elif task["status"] == "running":
+            elif status in ("discussing", "finalizing"):
                 status_item.setForeground(Qt.GlobalColor.cyan)
+            elif status == "failed":
+                status_item.setForeground(Qt.GlobalColor.red)
             self.task_table.setItem(row, 4, status_item)
-            
-            btn = QPushButton("查看结果")
-            btn.clicked.connect(lambda checked, t=task: self.view_task_result(t))
-            self.task_table.setCellWidget(row, 5, btn)
+
+            # 操作列
+            widget = QWidget()
+            btn_layout = QHBoxLayout(widget)
+            btn_layout.setContentsMargins(2, 2, 2, 2)
+            if status == "completed":
+                view_btn = QPushButton("查看结果")
+                view_btn.setStyleSheet("""
+                QPushButton {
+                    font-size: 12px;
+                    font-weight: bold;
+                    color: #0f172a;
+                    background-color: #94a3b8;
+                    border: 1px solid #94a3b8;  /* 这里可以改成更细，比如 1px 或 0.5px */
+                    border-radius: 5px;          /* 可以改小圆角 */
+                    padding: 4px 8px;            /* 内边距调整 */
+                }
+                QPushButton:hover {
+                    background-color: #e4b35f;
+                    border-color: #f59e0b;
+                    color: #000000;
+                }
+                QPushButton:pressed {
+                    background-color: #b45309;
+                    border-color: #b45309;
+                }
+                QPushButton:disabled {
+                    background-color: #475569;
+                    border-color: #475569;
+                    color: #94a3b8;
+                }
+                """)
+                view_btn.setMinimumWidth(80)
+                view_btn.setMinimumHeight(25)    
+                view_btn.clicked.connect(lambda checked, t=task: self.view_task_result(t))
+                btn_layout.addWidget(view_btn)
+            elif status in ("discussing", "finalizing"):
+                discuss_btn = QPushButton("进入讨论室")
+                discuss_btn.clicked.connect(lambda checked, t=task: self.open_discussion(t))
+                btn_layout.addWidget(discuss_btn)
+            else:
+                info_btn = QPushButton("无操作")
+                info_btn.setEnabled(False)
+                btn_layout.addWidget(info_btn)
+            btn_layout.addStretch()
+            self.task_table.setCellWidget(row, 5, widget)
 
     def _create_center_item(self, text):
         item = QTableWidgetItem(text)
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
+    
+    def open_discussion(self, task):
+        """管理员打开讨论室"""
+        from ui.discussion_widget import DiscussionWidget
+        # 避免重复添加同一个讨论室
+        for i in range(self.stack.count()):
+            w = self.stack.widget(i)
+            if isinstance(w, DiscussionWidget) and hasattr(w, 'task_id') and w.task_id == task["id"]:
+                self.stack.setCurrentWidget(w)
+                return
+        discussion = DiscussionWidget(
+            self.user_info, self.api, self.stack,
+            task["id"], task["question"], task.get("decision_mode", "multi_angle")
+        )
+        self.stack.addWidget(discussion)
+        self.stack.setCurrentWidget(discussion)
 
-    # ========== 查看任务结果（弹窗，与用户结果页一致，但无反馈选项卡） ==========
+    # ========== 查看任务结果（弹窗） ==========
     def view_task_result(self, task):
         result = self.api.get_debate_result(task["id"])
         if not result:
@@ -174,12 +245,10 @@ class AdminWidget(QWidget):
             ranking_widget = self._create_ranking_widget(ranking)
             tabs.addTab(ranking_widget, "加权排名")
         
-        # 注意：没有添加“用户反馈”选项卡
-        
         layout.addWidget(tabs)
         dialog.exec()
 
-    # ---------- 辅助展示方法（与用户结果页完全一致，但无反馈） ----------
+    # ---------- 辅助展示方法 ----------
     def _create_score_matrix_widget(self, outputs):
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -289,6 +358,38 @@ class AdminWidget(QWidget):
                 writer.writeheader()
                 writer.writerows(tasks)
             QMessageBox.information(self, "成功", f"已导出到 {file_path}")
+
+    # ========== 用户管理（新增） ==========
+    def init_user_tab(self):
+        layout = QVBoxLayout(self.user_tab)
+        layout.setContentsMargins(16, 20, 16, 16)
+        layout.setSpacing(16)
+
+        self.user_table = QTableWidget()
+        self.user_table.setColumnCount(4)
+        self.user_table.setHorizontalHeaderLabels(["用户ID", "用户名", "角色", "注册时间"])
+        self.user_table.setAlternatingRowColors(True)
+        self.user_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.user_table)
+
+        btn_layout = QHBoxLayout()
+        refresh_btn = QPushButton("刷新用户列表")
+        refresh_btn.clicked.connect(self.refresh_users)
+        btn_layout.addWidget(refresh_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        self.refresh_users()
+
+    def refresh_users(self):
+        users = self.api.get_all_users()
+        self.user_table.setRowCount(len(users))
+        for row, user in enumerate(users):
+            self.user_table.setItem(row, 0, self._create_center_item(str(user["id"])))
+            self.user_table.setItem(row, 1, QTableWidgetItem(user["username"]))
+            self.user_table.setItem(row, 2, self._create_center_item(user["role"]))
+            self.user_table.setItem(row, 3, self._create_center_item(user["created_at"]))
+    # ==================================
 
     # ========== Agent模板管理 ==========
     def init_template_tab(self):
@@ -442,43 +543,89 @@ class AdminWidget(QWidget):
                 QMessageBox.warning(self, "错误", "删除失败")
 
     # ========== 反馈统计与系统日志 ==========
+    def _create_stat_card(self, label_text, border_color):
+        card = QWidget()
+        card.setObjectName("StatCard")
+        card.setStyleSheet(f"QWidget#StatCard {{ border-left: 4px solid {border_color}; background-color: #0f172a; border-radius: 8px; }}")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        title_lbl = QLabel(label_text)
+        title_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold;")
+        value_lbl = QLabel("0")
+        value_lbl.setStyleSheet(f"color: {border_color}; font-size: 22px; font-weight: bold;")
+        card_layout.addWidget(title_lbl)
+        card_layout.addWidget(value_lbl)
+        card.setLayout(card_layout)
+        return card
+    
     def init_stats_tab(self):
         layout = QVBoxLayout(self.stats_tab)
         layout.setContentsMargins(16, 20, 16, 16)
         layout.setSpacing(16)
-        
+
+        # 统计卡片容器（使用网格布局，每行3个）
         stats_frame = QWidget()
-        stats_layout = QHBoxLayout(stats_frame)
-        stats_layout.setContentsMargins(0, 0, 0, 0)
+        stats_layout = QGridLayout(stats_frame)
         stats_layout.setSpacing(12)
-        
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 定义统计卡片： key, 显示名称, 颜色, 所在行列 (row, col)
+        card_configs = [
+            ("total_users", "用户总数", "#94a3b8", 0, 0),
+            ("total_tasks", "任务总数", "#b89a6a", 0, 1),
+            ("completed_tasks", "已完成任务", "#22c55e", 0, 2),
+            ("failed_tasks", "失败任务", "#ef4444", 1, 0),
+            ("total_feedback", "总反馈数", "#fbbf24", 1, 1),
+            ("active_templates", "启用模板", "#fbbf24", 1, 2),
+            ("task_queue_depth", "队列深度", "#60a5fa", 2, 0),
+            ("pipeline_active", "活动流水线", "#60a5fa", 2, 1),
+            ("llm_active", "LLM活跃数", "#60a5fa", 2, 2),
+        ]
+
         self.stats_labels = {}
-        card_configs = {
-            "total_users": ("用户总数:", "#94a3b8"),
-            "total_tasks": ("任务总数:", "#b89a6a"),
-            "completed_tasks": ("已完成:", "#22c55e"),
-            "feedback_count": ("反馈数:", "#fbbf24"),
-            "active_templates": ("启用模板:", "#fbbf24")
-        }
-        
-        for key, (label_name, border_color) in card_configs.items():
+        for key, label_name, border_color, row, col in card_configs:
             card = QWidget()
             card.setObjectName("StatCard")
-            card.setStyleSheet(f"QWidget#StatCard {{ border-left: 4px solid {border_color}; }}")
+            card.setStyleSheet(f"QWidget#StatCard {{ border-left: 4px solid {border_color}; background-color: #0f172a; border-radius: 8px; }}")
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(14, 12, 14, 12)
             title_lbl = QLabel(label_name)
-            title_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold;")
+            title_lbl.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: bold;")
             value_lbl = QLabel("0")
-            value_lbl.setStyleSheet(f"color: {border_color}; font-size: 22px; font-weight: bold;")
+            value_lbl.setStyleSheet(f"color: {border_color}; font-size: 24px; font-weight: bold;")
             card_layout.addWidget(title_lbl)
             card_layout.addWidget(value_lbl)
-            stats_layout.addWidget(card)
+            stats_layout.addWidget(card, row, col)
             self.stats_labels[key] = value_lbl
-        
+
         layout.addWidget(stats_frame)
+
+        # 筛选栏
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("事件类型:"))
+        self.event_type_combo = QComboBox()
+        # 可读的事件类型映射
+        event_type_map = {
+            "全部": None,
+            "用户注册": "user.register",
+            "用户登录": "user.login",
+            "创建任务": "task.create",
+            "任务开始分析": "task.processing",
+            "任务完成": "task.completed",
+            "任务失败": "task.failed",
+            "提交反馈": "feedback.vote"
+        }
+        for display, _ in event_type_map.items():
+            self.event_type_combo.addItem(display)
+        filter_layout.addWidget(self.event_type_combo)
+        filter_btn = QPushButton("筛选")
+        filter_btn.clicked.connect(self.refresh_stats)
+        filter_layout.addWidget(filter_btn)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
+        # 日志表格
         layout.addWidget(QLabel("操作日志"))
-        
         self.log_table = QTableWidget()
         self.log_table.setColumnCount(5)
         self.log_table.setHorizontalHeaderLabels(["ID", "用户ID", "事件类型", "描述", "时间"])
@@ -494,27 +641,42 @@ class AdminWidget(QWidget):
 
     def refresh_stats(self):
         stats = self.api.get_admin_stats()
-        self.stats_labels["total_users"].setText(str(stats.get('total_users', 0)))
-        self.stats_labels["total_tasks"].setText(str(stats.get('total_tasks', 0)))
-        self.stats_labels["completed_tasks"].setText(str(stats.get('completed_tasks', 0)))
-        self.stats_labels["feedback_count"].setText(str(stats.get('total_feedback', 0)))
-        self.stats_labels["active_templates"].setText(str(stats.get('active_templates', 0)))
+        # 更新统计卡片
+        for key, label in self.stats_labels.items():
+            val = stats.get(key, 0)
+            if isinstance(val, int):
+                label.setText(str(val))
+            else:
+                label.setText(str(val))
 
-        logs = self.api.get_admin_logs()
+        # 获取日志（根据筛选的事件类型）
+        selected_display = self.event_type_combo.currentText()
+        # 映射到后端 event_type
+        event_type_map = {
+            "全部": None,
+            "用户注册": "user.register",
+            "用户登录": "user.login",
+            "创建任务": "task.create",
+            "任务开始分析": "task.processing",
+            "任务完成": "task.completed",
+            "任务失败": "task.failed",
+            "提交反馈": "feedback.vote"
+        }
+        event_type = event_type_map.get(selected_display, None)
+
+        logs = self.api.get_admin_logs(event_type=event_type, limit=100)
         self.log_table.setRowCount(len(logs))
         for row, log in enumerate(logs):
             self.log_table.setItem(row, 0, self._create_center_item(str(log["id"])))
             self.log_table.setItem(row, 1, self._create_center_item(str(log.get("user_id", ""))))
-            event_type = log.get("event_type", "")
-            event_item = self._create_center_item(event_type)
-            if "delete" in event_type.lower() or "error" in event_type.lower():
-                event_item.setForeground(Qt.GlobalColor.red)
-            elif "create" in event_type.lower():
-                event_item.setForeground(Qt.GlobalColor.green)
-            self.log_table.setItem(row, 2, event_item)
+            # 事件类型也转换成中文显示
+            raw_event = log.get("event_type", "")
+            # 反向映射
+            reverse_map = {v: k for k, v in event_type_map.items() if v is not None}
+            event_display = reverse_map.get(raw_event, raw_event)
+            self.log_table.setItem(row, 2, self._create_center_item(event_display))
             self.log_table.setItem(row, 3, QTableWidgetItem(log.get("description", "")))
             self.log_table.setItem(row, 4, self._create_center_item(log.get("created_at", "")))
-
     def logout(self):
         self.api.logout()
         from ui.login_widget import LoginWidget

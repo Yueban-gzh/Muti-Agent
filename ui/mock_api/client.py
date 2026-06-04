@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, Any, Optional, List
 from .auth import register, login, get_current_user
 from .debate import create_task, get_task_status, get_task_result
 from .feedback import submit_feedback, get_feedback_stats
@@ -95,3 +95,42 @@ class MockAPI:
 
     def get_admin_logs(self, event_type=None, limit=100) -> list:
         return get_logs(event_type, limit)
+    def get_messages(self, task_id: int) -> list:
+        from .debate import get_messages
+        return get_messages(task_id)
+
+    def send_message(self, task_id: int, content: str, reply_scope: str) -> bool:
+        if not self._current_user:
+            return False
+        from .debate import send_message
+        result = send_message(task_id, self._current_user["id"], content, reply_scope)
+        return result.get("status") == "ok"
+
+    def agent_exchange(self, task_id: int) -> bool:
+        if not self._current_user:
+            return False
+        from .debate import agent_exchange
+        result = agent_exchange(task_id)
+        return result.get("status") == "ok"
+
+    def finalize_task(self, task_id: int) -> dict:
+        if not self._current_user:
+            return None
+        from .debate import finalize_task
+        return finalize_task(task_id)
+    def get_admin_stats(self) -> Dict[str, Any]:
+        return {
+            "total_users": 8,
+            "total_tasks": 25,
+            "completed_tasks": 20,
+            "failed_tasks": 1,
+            "pending_tasks": 4,
+            "task_queue_depth": 2,
+            "pipeline_active": 1,
+            "pipeline_max": 3,
+            "llm_active": 1,
+            "llm_max": 2,
+            "llm_available_slots": 1,
+            "total_feedback": 15,
+            "active_templates": 5
+        }

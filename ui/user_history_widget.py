@@ -75,11 +75,28 @@ class UserHistoryWidget(QWidget):
             self.table.setCellWidget(row, 3, btn)
 
     def view_result(self, task):
-        # 使用 "id" 而不是 "task_id"
-        task_detail = self.api.get_debate_result(task["id"])
-        if task_detail:
-            self.result_widget.load_history_result(task["id"], task_detail, show_export=True)
-            self.stack.setCurrentWidget(self.result_widget)
+        task_id = task["id"]
+        status = task.get("status")  # 确保历史列表中有 status 字段
+        if status == "completed":
+            task_detail = self.api.get_debate_result(task_id)
+            if task_detail:
+                self.result_widget.load_history_result(task_id, task_detail, show_export=True)
+                self.stack.setCurrentWidget(self.result_widget)
+            else:
+                QMessageBox.warning(self, "错误", "无法获取该任务的结果")
+        elif status in ("discussing", "finalizing"):
+            from ui.discussion_widget import DiscussionWidget
+            # 检查是否已存在该任务的讨论室
+            for i in range(self.stack.count()):
+                w = self.stack.widget(i)
+                if isinstance(w, DiscussionWidget) and hasattr(w, 'task_id') and w.task_id == task_id:
+                    self.stack.setCurrentWidget(w)
+                    return
+            discussion_widget = DiscussionWidget(
+                self.user_info, self.api, self.stack,
+                task_id, task["question"], task.get("decision_mode", "multi_angle")
+        )
+            self.stack.addWidget(discussion_widget)
+            self.stack.setCurrentWidget(discussion_widget)
         else:
-            QMessageBox.warning(self, "错误", "无法获取该任务的结果")
-    
+            QMessageBox.warning(self, "错误", "无法查看该任务")

@@ -118,47 +118,62 @@ class UserHomeWidget(QWidget):
             QMessageBox.warning(self, "错误", "请输入决策问题")
             return
 
-        # ... 构建 payload 的代码不变 ...
-        agents_list = []
-        for inp in self.agent_inputs:
-            agents_list.append({
-                "agent_name": inp["agent"].text().strip(),
-                "role": inp["role"].text().strip(),
-                "focus": inp["focus"].text().strip(),
-                "tone": inp["tone"].text().strip()
+        mode_map = {
+            "多角度分析": "multi_angle",
+            "正反辩论": "debate",
+            "专家会诊": "expert_consult",
+            "风险评审": "risk_review"
+        }
+        decision_mode = mode_map[self.mode_combo.currentText()]
+
+        agents = []
+        for idx, inp in enumerate(self.agent_inputs):
+            name = inp["agent"].text().strip()
+            role = inp["role"].text().strip()
+            focus = inp["focus"].text().strip()
+            tone = inp["tone"].text().strip()
+            if not name:
+                QMessageBox.warning(self, "错误", f"智能体 {idx+1} 的名称不能为空")
+                return
+            agents.append({
+                "agent_name": name,
+                "role_description": role,
+                "focus_area": focus,
+                "tone": tone
             })
 
         payload = {
             "question": question,
-            "decision_mode": self.mode_combo.currentText(),
-            "agent_count": len(agents_list),
-            "agents": agents_list
+            "decision_mode": decision_mode,
+            "agent_count": len(agents),
+            "agents": agents
         }
-        # 禁用按钮，显示分析中
+
         self.submit_btn.setEnabled(False)
-        self.submit_btn.setText("分析中...")
+        self.submit_btn.setText("创建中...")
         self._submitting = True
 
         result = self.api.start_debate(payload)
-        if not result or not result.get("task_id"):
+        if result and result.get("task_id"):
+            task_id = result["task_id"]
+            from ui.discussion_widget import DiscussionWidget
+            discussion_widget = DiscussionWidget(
+                self.user_info, self.api, self.stack,
+                task_id, question, decision_mode
+            )
+            self.stack.addWidget(discussion_widget)
+            self.stack.setCurrentWidget(discussion_widget)
+            # 创建成功后恢复按钮状态，以便下次创建新任务时按钮可用
+            self._reset_submit_button()
+        else:
             self._reset_submit_button()
             QMessageBox.warning(self, "错误", "创建任务失败")
-            return
-
-        task_id = result["task_id"]
-
-        if USE_REAL_API:
-            # 真实后端：启动轮询
-            self.poll_task_result(task_id)
-        else:
-            # Mock 模式：任务已经同步完成，直接获取结果
-            final_result = self.api.get_debate_result(task_id)
-            if final_result:
-                self.result_widget.load_result(task_id, final_result)
-                self.stack.setCurrentWidget(self.result_widget)
-            else:
-                QMessageBox.warning(self, "错误", "获取任务结果失败")
-            self._reset_submit_button()
+    def _reset_submit_button(self):
+        """恢复按钮状态"""
+        self.submit_btn.setEnabled(True)
+        self.submit_btn.setText("开始分析")
+        if hasattr(self, '_submitting'):
+            self._submitting = False
     def poll_task_result(self, task_id):
         """开始轮询任务状态，每2秒检查一次，不设超时"""
         self.poll_timer = QTimer()
