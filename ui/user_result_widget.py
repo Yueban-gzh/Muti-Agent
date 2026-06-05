@@ -174,6 +174,8 @@ class UserResultWidget(QWidget):
         return widget
 
     def create_similarity_widget(self, similarities, agent_id_to_name):
+        plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'PingFang SC']  # Windows / macOS
+        plt.rcParams['axes.unicode_minus'] = False
         agent_ids = list(agent_id_to_name.keys())
         n = len(agent_ids)
         matrix = np.ones((n, n))

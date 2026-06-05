@@ -70,9 +70,12 @@ class UserHomeWidget(QWidget):
     def on_mode_changed(self, mode_text):
         is_debate = (mode_text == "正反辩论")
         for inp in self.agent_inputs:
-            stance_widget = inp.get("stance")
-            if stance_widget:
-                stance_widget.setVisible(is_debate)
+            label = inp.get("stance_label")
+            combo = inp.get("stance_combo")
+            if label:
+                label.setVisible(is_debate)
+            if combo:
+                combo.setVisible(is_debate)
 
     def on_agent_count_changed(self, count):
         # 清空
@@ -107,14 +110,14 @@ class UserHomeWidget(QWidget):
             for display, value in stance_items.items():
                 stance_combo.addItem(display, value)
             stance_combo.setCurrentIndex(2)  # 默认选中“中立”
-            stance_combo.setVisible(self.mode_combo.currentText() == "正反辩论")  # 仅辩论模式显示
+            stance_label = QLabel("辩论立场:")
             weight_spin = QDoubleSpinBox()
             weight_spin.setRange(0.0, 1.0)
             weight_spin.setSingleStep(0.05)
             weight_spin.setValue(0.5)
 
             form.addRow("名称:", name_edit)
-            form.addRow("辩论立场:", stance_combo)
+            form.addRow(stance_label, stance_combo)
             form.addRow("角色描述:", role_edit)
             form.addRow("关注领域:", focus_edit)
             form.addRow("风格:", tone_edit)
@@ -128,7 +131,8 @@ class UserHomeWidget(QWidget):
                 "focus": focus_edit,
                 "tone": tone_edit,
                 "weight": weight_spin,
-                "stance": stance_combo
+                "stance_combo": stance_combo,
+                "stance_label": stance_label
             })
         self.on_mode_changed(self.mode_combo.currentText())
 
@@ -165,7 +169,7 @@ class UserHomeWidget(QWidget):
                 "tone": tone,
             }
             if decision_mode == "debate":
-                stance = inp["stance"].currentData()  # 获取存储的英文值
+                stance = inp["stance_combo"].currentData()  # 获取存储的英文值
                 agent["stance"] = stance
             agents.append(agent)
 
