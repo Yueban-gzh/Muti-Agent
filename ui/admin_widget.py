@@ -6,9 +6,29 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTableWidget,
                              QTableWidgetItem, QPushButton, QHBoxLayout, QLabel, QHeaderView,
                              QFileDialog, QMessageBox, QDialog, QFormLayout, QLineEdit, QTextEdit,
-                             QComboBox, QDialogButtonBox, QTextBrowser, QSizePolicy,QGridLayout,QScrollArea,QFrame)
-from PyQt6.QtCore import Qt
+                             QComboBox, QDialogButtonBox, QTextBrowser, QSizePolicy, QGridLayout,
+                             QScrollArea, QFrame)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
+# ========== 异步刷新线程 ==========
+class RefreshStatsThread(QThread):
+    finished = pyqtSignal(dict, list)  # (stats, logs)
+    error = pyqtSignal(str)
+
+    def __init__(self, api, event_type):
+        super().__init__()
+        self.api = api
+        self.event_type = event_type
+
+    def run(self):
+        try:
+            stats = self.api.get_admin_stats()
+            logs = self.api.get_admin_logs(event_type=self.event_type, limit=100)
+            self.finished.emit(stats, logs)
+        except Exception as e:
+            self.error.emit(str(e))
+
+# ========== 主管理员窗口 ==========
 class AdminWidget(QWidget):
     def __init__(self, user_info, api_client, stack):
         super().__init__()
@@ -66,11 +86,10 @@ class AdminWidget(QWidget):
         self.init_task_tab()
         self.tabs.addTab(self.task_tab, "用户与任务管理")
 
-        # ========== 新增：用户管理标签页 ==========
+        # 用户管理标签页
         self.user_tab = QWidget()
         self.init_user_tab()
         self.tabs.addTab(self.user_tab, "用户管理")
-        # =====================================
 
         # Agent模板管理标签页
         self.template_tab = QWidget()
@@ -141,9 +160,9 @@ class AdminWidget(QWidget):
                     font-weight: bold;
                     color: #0f172a;
                     background-color: #94a3b8;
-                    border: 1px solid #94a3b8;  /* 这里可以改成更细，比如 1px 或 0.5px */
-                    border-radius: 5px;          /* 可以改小圆角 */
-                    padding: 4px 8px;            /* 内边距调整 */
+                    border: 1px solid #94a3b8;
+                    border-radius: 5px;
+                    padding: 4px 8px;
                 }
                 QPushButton:hover {
                     background-color: #e4b35f;
@@ -183,7 +202,6 @@ class AdminWidget(QWidget):
     def open_discussion(self, task):
         """管理员打开讨论室"""
         from ui.discussion_widget import DiscussionWidget
-        # 避免重复添加同一个讨论室
         for i in range(self.stack.count()):
             w = self.stack.widget(i)
             if isinstance(w, DiscussionWidget) and hasattr(w, 'task_id') and w.task_id == task["id"]:
@@ -359,7 +377,7 @@ class AdminWidget(QWidget):
                 writer.writerows(tasks)
             QMessageBox.information(self, "成功", f"已导出到 {file_path}")
 
-    # ========== 用户管理（新增） ==========
+    # ========== 用户管理 ==========
     def init_user_tab(self):
         layout = QVBoxLayout(self.user_tab)
         layout.setContentsMargins(16, 20, 16, 16)
@@ -389,7 +407,6 @@ class AdminWidget(QWidget):
             self.user_table.setItem(row, 1, QTableWidgetItem(user["username"]))
             self.user_table.setItem(row, 2, self._create_center_item(user["role"]))
             self.user_table.setItem(row, 3, self._create_center_item(user["created_at"]))
-    # ==================================
 
     # ========== Agent模板管理 ==========
     def init_template_tab(self):
@@ -424,7 +441,6 @@ class AdminWidget(QWidget):
 
     def refresh_templates(self):
         response = self.api.list_templates(include_inactive=True)
-        # 处理两种可能的返回格式：直接列表 或 包含 templates 字段的字典
         if isinstance(response, dict):
             templates = response.get("templates", [])
         else:
@@ -447,7 +463,6 @@ class AdminWidget(QWidget):
             self.template_table.setItem(row, 3, QTableWidgetItem(t.get("focus_area", "")))
             self.template_table.setItem(row, 4, self._create_center_item(t.get("tone", "")))
             
-            # 操作按钮
             btn_widget = QWidget()
             btn_layout = QHBoxLayout(btn_widget)
             btn_layout.setContentsMargins(6, 0, 6, 0)
@@ -503,23 +518,29 @@ class AdminWidget(QWidget):
                 QMessageBox.information(self, "成功", "模板已创建")
 
     def edit_template(self, template_id):
-        templates = self.api.list_templates(include_inactive=True)
+        response = self.api.list_templates(include_inactive=True)
+        if isinstance(response, dict):
+            templates = response.get("templates", [])
+        else:
+            templates = response if isinstance(response, list) else []
+        
         tmpl = next((t for t in templates if t["id"] == template_id), None)
         if not tmpl:
+            QMessageBox.warning(self, "错误", "模板不存在")
             return
         dialog = QDialog(self)
         dialog.setWindowTitle(f"编辑模板 - {tmpl['name']}")
         layout = QFormLayout(dialog)
         layout.setVerticalSpacing(12)
         name_edit = QLineEdit(tmpl["name"])
-        role_edit = QLineEdit(tmpl["role_description"])
-        focus_edit = QLineEdit(tmpl["focus_area"])
+        role_edit = QLineEdit(tmpl.get("role_description", ""))
+        focus_edit = QLineEdit(tmpl.get("focus_area", ""))
         tone_edit = QComboBox()
         tone_edit.addItems(["严谨型", "鼓励型", "中立型", "激进型", "保守型"])
-        tone_edit.setCurrentText(tmpl["tone"])
+        tone_edit.setCurrentText(tmpl.get("tone", "中立型"))
         active_cb = QComboBox()
         active_cb.addItems(["启用", "禁用"])
-        active_cb.setCurrentIndex(0 if tmpl["is_active"] else 1)
+        active_cb.setCurrentIndex(0 if tmpl.get("is_active", 1) else 1)
         layout.addRow("名称:", name_edit)
         layout.addRow("角色描述:", role_edit)
         layout.addRow("关注领域:", focus_edit)
@@ -542,7 +563,17 @@ class AdminWidget(QWidget):
             QMessageBox.information(self, "成功", "模板已更新")
 
     def delete_template(self, template_id):
-        confirm = QMessageBox.question(self, "确认删除", "确定要删除此模板吗？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        response = self.api.list_templates(include_inactive=True)
+        if isinstance(response, dict):
+            templates = response.get("templates", [])
+        else:
+            templates = response if isinstance(response, list) else []
+        tmpl = next((t for t in templates if t["id"] == template_id), None)
+        if not tmpl:
+            QMessageBox.warning(self, "错误", "模板不存在")
+            return
+        confirm = QMessageBox.question(self, "确认删除", f"确定要删除模板「{tmpl['name']}」吗？", 
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:
             success = self.api.delete_template(template_id)
             if success:
@@ -551,33 +582,18 @@ class AdminWidget(QWidget):
             else:
                 QMessageBox.warning(self, "错误", "删除失败")
 
-    # ========== 反馈统计与系统日志 ==========
-    def _create_stat_card(self, label_text, border_color):
-        card = QWidget()
-        card.setObjectName("StatCard")
-        card.setStyleSheet(f"QWidget#StatCard {{ border-left: 4px solid {border_color}; background-color: #0f172a; border-radius: 8px; }}")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 12, 14, 12)
-        title_lbl = QLabel(label_text)
-        title_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold;")
-        value_lbl = QLabel("0")
-        value_lbl.setStyleSheet(f"color: {border_color}; font-size: 22px; font-weight: bold;")
-        card_layout.addWidget(title_lbl)
-        card_layout.addWidget(value_lbl)
-        card.setLayout(card_layout)
-        return card
-    
+    # ========== 反馈统计与系统日志（异步版） ==========
     def init_stats_tab(self):
         # 1. 最外层的主布局（垂直排列：上方是滚动区域，下方是固定刷新按钮）
         main_layout = QVBoxLayout(self.stats_tab)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(12) # 滚动区域与固定按钮之间的间距
+        main_layout.setSpacing(12)
 
         # 2. 创建滚动区域（只包裹卡片和日志面板）
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        main_layout.addWidget(scroll_area) # 将滚动区域添加到主布局
+        main_layout.addWidget(scroll_area)
 
         # 滚动区域内部的承载容器
         container_widget = QWidget()
@@ -585,13 +601,13 @@ class AdminWidget(QWidget):
 
         # 内部容器的布局
         layout = QVBoxLayout(container_widget)
-        layout.setContentsMargins(24, 24, 24, 12) # 稍微减小底部内边距
-        layout.setSpacing(24) 
+        layout.setContentsMargins(24, 24, 24, 12)
+        layout.setSpacing(24)
 
         # --- [统计卡片区域] ---
         stats_frame = QWidget()
         stats_layout = QGridLayout(stats_frame)
-        stats_layout.setSpacing(12) 
+        stats_layout.setSpacing(12)
         stats_layout.setContentsMargins(0, 0, 0, 0)
 
         card_configs = [
@@ -626,7 +642,7 @@ class AdminWidget(QWidget):
             """)
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(14, 10, 14, 10)
-            card_layout.setSpacing(4) 
+            card_layout.setSpacing(4)
             
             title_lbl = QLabel(label_name)
             title_lbl.setStyleSheet("font-size: 12px; font-weight: 500;") 
@@ -675,9 +691,9 @@ class AdminWidget(QWidget):
             self.event_type_combo.addItem(display)
         filter_layout.addWidget(self.event_type_combo)
         
-        filter_btn = QPushButton("筛选")
-        filter_btn.clicked.connect(self.refresh_stats)
-        filter_layout.addWidget(filter_btn)
+        self.filter_btn = QPushButton("筛选")
+        self.filter_btn.clicked.connect(self._start_refresh)   # 异步刷新
+        filter_layout.addWidget(self.filter_btn)
         filter_layout.addStretch()
         
         panel_layout.addLayout(filter_layout)
@@ -693,7 +709,7 @@ class AdminWidget(QWidget):
         self.log_table.setHorizontalHeaderLabels(["ID", "用户ID", "事件类型", "描述", "时间"])
         self.log_table.setAlternatingRowColors(True)
         self.log_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.log_table.setMinimumHeight(450) 
+        self.log_table.setMinimumHeight(450)
         
         self.log_table.setStyleSheet("""
             QTableWidget { border: none; border-radius: 0px; }
@@ -704,39 +720,26 @@ class AdminWidget(QWidget):
         self.log_table.verticalHeader().setVisible(False)
         panel_layout.addWidget(self.log_table)
         
-        # 将日志大面板塞入滚动容器
         layout.addWidget(panel_widget)
 
-        # --- 3. 【核心修改】固定在最底部的刷新按钮 ---
-        # 创建一个底部的容器，给它加点边距，让按钮离屏幕边缘有一点呼吸感
+        # --- 固定在最底部的刷新按钮 ---
         bottom_container = QWidget()
         bottom_layout = QHBoxLayout(bottom_container)
-        bottom_layout.setContentsMargins(24, 0, 24, 16) # 左右24px对齐内容，下边留16px防死粘
+        bottom_layout.setContentsMargins(24, 0, 24, 16)
         
-        refresh_btn = QPushButton("刷新统计与日志")
-        refresh_btn.clicked.connect(self.refresh_stats)
+        self.refresh_btn = QPushButton("刷新统计与日志")
+        self.refresh_btn.clicked.connect(self._start_refresh)   # 异步刷新
+        bottom_layout.addWidget(self.refresh_btn)
         
-        bottom_layout.addWidget(refresh_btn)
-        
-        # 直接加进 main_layout（脱离滚动区域）
         main_layout.addWidget(bottom_container)
 
-        # 触发首次刷新
-        # self.refresh_stats()
+        # 初次加载数据（异步）
+        self._start_refresh()
 
-    def refresh_stats(self):
-        stats = self.api.get_admin_stats()
-        # 更新统计卡片
-        for key, label in self.stats_labels.items():
-            val = stats.get(key, 0)
-            if isinstance(val, int):
-                label.setText(str(val))
-            else:
-                label.setText(str(val))
-
-        # 获取日志（根据筛选的事件类型）
+    def _start_refresh(self):
+        """启动后台刷新线程"""
+        # 获取当前筛选的事件类型
         selected_display = self.event_type_combo.currentText()
-        # 映射到后端 event_type
         event_type_map = {
             "全部": None,
             "用户注册": "user.register",
@@ -749,19 +752,58 @@ class AdminWidget(QWidget):
         }
         event_type = event_type_map.get(selected_display, None)
 
-        logs = self.api.get_admin_logs(event_type=event_type, limit=100)
+        # 禁用按钮，显示加载状态
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("加载中...")
+        self.filter_btn.setEnabled(False)
+        self.filter_btn.setText("加载中...")
+
+        self.refresh_thread = RefreshStatsThread(self.api, event_type)
+        self.refresh_thread.finished.connect(self._on_refresh_finished)
+        self.refresh_thread.error.connect(self._on_refresh_error)
+        self.refresh_thread.start()
+
+    def _on_refresh_finished(self, stats, logs):
+        """刷新成功回调"""
+        # 更新统计卡片
+        for key, label in self.stats_labels.items():
+            val = stats.get(key, 0)
+            label.setText(str(val))
+
+        # 更新日志表格
+        reverse_map = {
+            "user.register": "用户注册",
+            "user.login": "用户登录",
+            "task.create": "创建任务",
+            "task.processing": "任务开始分析",
+            "task.completed": "任务完成",
+            "task.failed": "任务失败",
+            "feedback.vote": "提交反馈"
+        }
         self.log_table.setRowCount(len(logs))
         for row, log in enumerate(logs):
             self.log_table.setItem(row, 0, self._create_center_item(str(log["id"])))
             self.log_table.setItem(row, 1, self._create_center_item(str(log.get("user_id", ""))))
-            # 事件类型也转换成中文显示
             raw_event = log.get("event_type", "")
-            # 反向映射
-            reverse_map = {v: k for k, v in event_type_map.items() if v is not None}
             event_display = reverse_map.get(raw_event, raw_event)
             self.log_table.setItem(row, 2, self._create_center_item(event_display))
             self.log_table.setItem(row, 3, QTableWidgetItem(log.get("description", "")))
             self.log_table.setItem(row, 4, self._create_center_item(log.get("created_at", "")))
+
+        # 恢复按钮
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText("刷新统计与日志")
+        self.filter_btn.setEnabled(True)
+        self.filter_btn.setText("筛选")
+
+    def _on_refresh_error(self, error_msg):
+        """刷新失败回调"""
+        QMessageBox.warning(self, "错误", f"刷新失败: {error_msg}")
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText("刷新统计与日志")
+        self.filter_btn.setEnabled(True)
+        self.filter_btn.setText("筛选")
+
     def logout(self):
         self.api.logout()
         from ui.login_widget import LoginWidget
