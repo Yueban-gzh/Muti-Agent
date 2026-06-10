@@ -4,7 +4,43 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QMessageBox, QComboBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QThread, pyqtSignal
 from ui.config import USE_REAL_API
+
+class StartDebateThread(QThread):
+    finished = pyqtSignal(object)  # 返回创建结果字典
+    error = pyqtSignal(str)
+
+    def __init__(self, api, payload):
+        super().__init__()
+        self.api = api
+        self.payload = payload
+
+    def run(self):
+        try:
+            result = self.api.start_debate(self.payload)
+            if result:
+                self.finished.emit(result)
+            else:
+                self.error.emit("创建任务失败")
+        except Exception as e:
+            self.error.emit(str(e))
+class RefreshStatsThread(QThread):
+    finished = pyqtSignal(dict, list)  # (stats, logs)
+    error = pyqtSignal(str)
+
+    def __init__(self, api, event_type):
+        super().__init__()
+        self.api = api
+        self.event_type = event_type
+
+    def run(self):
+        try:
+            stats = self.api.get_admin_stats()
+            logs = self.api.get_admin_logs(event_type=self.event_type, limit=100)
+            self.finished.emit(stats, logs)
+        except Exception as e:
+            self.error.emit(str(e))
 
 class UserHomeWidget(QWidget):
     def __init__(self, user_info, api_client, stack, result_widget):
@@ -161,7 +197,6 @@ class UserHomeWidget(QWidget):
             if not name:
                 QMessageBox.warning(self, "错误", f"智能体 {idx+1} 的名称不能为空")
                 return
-
             agent = {
                 "agent_name": name,
                 "role_description": role,
@@ -169,7 +204,7 @@ class UserHomeWidget(QWidget):
                 "tone": tone,
             }
             if decision_mode == "debate":
-                stance = inp["stance_combo"].currentData()  # 获取存储的英文值
+                stance = inp["stance_combo"].currentData()
                 agent["stance"] = stance
             agents.append(agent)
 
@@ -180,24 +215,41 @@ class UserHomeWidget(QWidget):
             "agents": agents
         }
 
+        # 禁用按钮，显示创建中
         self.submit_btn.setEnabled(False)
         self.submit_btn.setText("创建中...")
         self._submitting = True
 
-        result = self.api.start_debate(payload)
+        # 启动异步线程
+        self.debate_thread = StartDebateThread(self.api, payload)
+        self.debate_thread.finished.connect(self.on_debate_created)
+        self.debate_thread.error.connect(self.on_debate_error)
+        self.debate_thread.start()
+
+    def on_debate_created(self, result):
+        self._reset_submit_button()
         if result and result.get("task_id"):
             task_id = result["task_id"]
             from ui.discussion_widget import DiscussionWidget
             discussion_widget = DiscussionWidget(
                 self.user_info, self.api, self.stack,
-                task_id, question, decision_mode
+                task_id, self.question_edit.toPlainText().strip(),
+                mode_map[self.mode_combo.currentText()]
             )
             self.stack.addWidget(discussion_widget)
             self.stack.setCurrentWidget(discussion_widget)
-            self._reset_submit_button()
         else:
-            self._reset_submit_button()
             QMessageBox.warning(self, "错误", "创建任务失败")
+
+    def on_debate_error(self, error_msg):
+        self._reset_submit_button()
+        QMessageBox.warning(self, "错误", f"创建任务失败: {error_msg}")
+
+    def _reset_submit_button(self):
+        self.submit_btn.setEnabled(True)
+        self.submit_btn.setText("开始分析")
+        if hasattr(self, '_submitting'):
+            self._submitting = False
 
     def poll_task_result(self, task_id):
         """开始轮询任务状态，每2秒检查一次，不设超时"""
