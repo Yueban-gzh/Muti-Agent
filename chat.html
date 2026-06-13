@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jixia Chat — Hunyuan-7B</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background:#0f0f0f; color:#e0e0e0; height:100vh; display:flex; flex-direction:column; }
+.header { background:#1a1a2e; padding:12px 20px; display:flex; align-items:center; gap:12px; border-bottom:1px solid #2a2a4a; }
+.header .dot { width:8px; height:8px; border-radius:50%; background:#4f4; animation:pulse 2s infinite; }
+@keyframes pulse { 50% { opacity:0.5; } }
+.header .dot.off { background:#f44; animation:none; }
+.header h1 { font-size:16px; font-weight:500; }
+.header .info { font-size:12px; color:#888; margin-left:auto; }
+#messages { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+.msg { max-width:80%; padding:12px 16px; border-radius:12px; line-height:1.6; font-size:14px; white-space:pre-wrap; word-break:break-word; }
+.msg.user { align-self:flex-end; background:#2563eb; color:#fff; }
+.msg.assistant { align-self:flex-start; background:#1e1e3a; border:1px solid #2a2a4a; }
+.msg.system { align-self:center; font-size:12px; color:#666; padding:4px 12px; }
+.input-area { padding:16px 20px; background:#1a1a2e; border-top:1px solid #2a2a4a; display:flex; gap:12px; }
+.input-area textarea { flex:1; background:#0f0f0f; border:1px solid #333; border-radius:8px; color:#e0e0e0; padding:10px 14px; font-size:14px; resize:none; min-height:44px; max-height:120px; font-family:inherit; outline:none; }
+.input-area textarea:focus { border-color:#2563eb; }
+.input-area button { padding:10px 24px; background:#2563eb; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; white-space:nowrap; }
+.input-area button:hover { background:#1d4ed8; }
+.input-area button:disabled { opacity:0.4; cursor:not-allowed; }
+.config-row { display:flex; gap:12px; padding:8px 20px; background:#16162a; align-items:center; font-size:12px; }
+.config-row label { color:#888; }
+.config-row input, .config-row select { background:#0f0f0f; border:1px solid #333; color:#e0e0e0; padding:4px 8px; border-radius:4px; font-size:12px; }
+.config-row input[type="number"] { width:70px; }
+.config-row select { width:100px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="dot" id="status-dot"></div>
+  <h1>Jixia Chat</h1>
+  <span style="font-size:12px;color:#888;">Hunyuan-7B GPTQ-INT4</span>
+  <span class="info" id="status-text">未连接</span>
+</div>
+
+<div class="config-row">
+  <label>API:</label>
+  <input type="text" id="api-url" value="http://10.112.247.63:30000/v1/chat/completions" style="flex:1;max-width:420px;">
+  <label>Max Tokens:</label>
+  <input type="number" id="max-tokens" value="512" min="1" max="4096">
+  <label>Temp:</label>
+  <input type="number" id="temperature" value="0.7" min="0" max="2" step="0.1">
+  <button onclick="checkHealth()" style="padding:4px 12px;font-size:11px;">检测连接</button>
+</div>
+
+<div id="messages">
+  <div class="msg system">输入消息开始与 Hunyuan-7B 对话</div>
+</div>
+
+<div class="input-area">
+  <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行..." onkeydown="onKey(event)"></textarea>
+  <button id="send-btn" onclick="send()">发送</button>
+</div>
+
+<script>
+const API = () => document.getElementById('api-url').value;
+const MAX_TOKENS = () => +document.getElementById('max-tokens').value;
+const TEMP = () => +document.getElementById('temperature').value;
+
+let isStreaming = false;
+
+async function checkHealth() {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  dot.className = 'dot off';
+  text.textContent = '检测中...';
+  try {
+    const r = await fetch(API().replace('/v1/chat/completions','/health'), { signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      dot.className = 'dot';
+      text.textContent = '已连接 ✅';
+      const j = await r.json();
+      addMsg('system', `已连接到 ${j.model || 'Hunyuan-7B'}`);
+    } else {
+      text.textContent = '服务器错误';
+    }
+  } catch(e) {
+    text.textContent = '无法连接 ❌';
+    addMsg('system', '❌ 无法连接服务器，请确认服务已启动');
+  }
+}
+
+function onKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+}
+
+function addMsg(role, content) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  const msgs = document.getElementById('messages');
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+async function send() {
+  const input = document.getElementById('input');
+  const prompt = input.value.trim();
+  if (!prompt || isStreaming) return;
+
+  input.value = '';
+  addMsg('user', prompt);
+
+  const assistantDiv = addMsg('assistant', '⏳');
+  isStreaming = true;
+  document.getElementById('send-btn').disabled = true;
+
+  const messages = [];
+  document.querySelectorAll('.msg.user,.msg.assistant').forEach(m => {
+    if (m !== assistantDiv && m.textContent !== '⏳') {
+      messages.push({
+        role: m.classList.contains('user') ? 'user' : 'assistant',
+        content: m.textContent
+      });
+    }
+  });
+
+  try {
+    const resp = await fetch(API(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'default',
+        messages: [...messages, { role:'user', content: prompt }],
+        max_tokens: MAX_TOKENS(),
+        temperature: TEMP(),
+        stream: true,
+      }),
+    });
+
+    if (!resp.ok) {
+      assistantDiv.textContent = `❌ 错误: ${resp.status} ${resp.statusText}`;
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      for (const line of chunk.split('\n')) {
+        if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+          try {
+            const j = JSON.parse(line.slice(6));
+            const delta = j.choices?.[0]?.delta?.content || '';
+            fullText += delta;
+            assistantDiv.textContent = fullText;
+            document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+          } catch(e) {}
+        }
+      }
+    }
+    if (!fullText) assistantDiv.textContent = '(空响应)';
+  } catch(e) {
+    assistantDiv.textContent = `❌ 请求失败: ${e.message}`;
+  } finally {
+    isStreaming = false;
+    document.getElementById('send-btn').disabled = false;
+  }
+}
+
+// 启动时检测
+checkHealth();
+</script>
+</body>
+</html>
