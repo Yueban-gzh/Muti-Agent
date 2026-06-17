@@ -16,6 +16,7 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         
         self.stack = QStackedWidget()
+        self._discussion_widget = None  # 当前活跃的讨论室
         
         if user_info['role'] == 'admin':
             self.admin_widget = AdminWidget(user_info, self.api, self.stack)
@@ -124,6 +125,16 @@ class MainWindow(QMainWindow):
         # 将导航菜单加入布局
         nav_layout.addWidget(btn_home)
         nav_layout.addWidget(btn_history)
+
+        # 讨论室按钮（动态显示/隐藏）
+        self.discussion_btn = QPushButton("  当前讨论")
+        self.discussion_btn.setStyleSheet(button_style)
+        self.discussion_btn.setCheckable(True)
+        self.discussion_btn.clicked.connect(self._go_to_discussion)
+        self.discussion_btn.setVisible(False)
+        self.nav_group.addButton(self.discussion_btn)
+        nav_layout.addWidget(self.discussion_btn)
+
         # 添加一个弹簧，将下面内容推到底部（这样才能让 GIF 和退出按钮紧贴底部）
         nav_layout.addStretch()
 
@@ -175,6 +186,22 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
+
+    def set_active_discussion(self, widget):
+        """注册当前活跃的讨论室 — 侧边栏显示"返回讨论"按钮。"""
+        self._discussion_widget = widget
+        self.discussion_btn.setVisible(True)
+        self.discussion_btn.setChecked(True)
+
+    def clear_active_discussion(self):
+        """讨论结束，隐藏按钮。"""
+        self._discussion_widget = None
+        self.discussion_btn.setVisible(False)
+
+    def _go_to_discussion(self):
+        """回到当前讨论室。"""
+        if self._discussion_widget:
+            self.stack.setCurrentWidget(self._discussion_widget)
 
     def logout(self):
         self.api.logout()

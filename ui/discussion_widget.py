@@ -160,6 +160,21 @@ class DiscussionWidget(QWidget):
         # 异步发送初始消息，不阻塞 UI
         self._send_initial_async()
 
+        # 注册到侧边栏（延迟，等 widget 挂到窗口上）
+        QTimer.singleShot(0, self._register_in_sidebar)
+
+    def _register_in_sidebar(self):
+        """在侧边栏注册"返回讨论室"按钮。"""
+        main_win = self.window()
+        if main_win and hasattr(main_win, 'set_active_discussion'):
+            main_win.set_active_discussion(self)
+
+    def _unregister_from_sidebar(self):
+        """从侧边栏移除讨论室按钮。"""
+        main_win = self.window()
+        if main_win and hasattr(main_win, 'clear_active_discussion'):
+            main_win.clear_active_discussion()
+
     def init_ui(self):
         layout = QVBoxLayout()
         layout.setSpacing(10)
@@ -387,6 +402,7 @@ class DiscussionWidget(QWidget):
 
     def on_result_ready(self, result_data):
         self.fetch_thread = None
+        self._unregister_from_sidebar()
         # 跳转到结果页
         for i in range(self.stack.count()):
             w = self.stack.widget(i)
