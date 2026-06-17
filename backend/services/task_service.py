@@ -98,9 +98,10 @@ class TaskService:
         await db.flush()
 
         resolved_agents: list[dict] = []
+        used_tones: set = set()
         for idx, agent_cfg in enumerate(task_data.agents):
             resolved = await resolve_agent_config(
-                db, agent_cfg, task_data.decision_mode, idx
+                db, agent_cfg, task_data.decision_mode, idx, used_tones
             )
             resolved_agents.append(resolved)
 
