@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,12 +11,16 @@ from db.models import AgentTemplate
 from schemas.task import AgentConfig
 from services.exceptions import ServiceError
 
+# 五种可用性格 tone 列表
+AVAILABLE_TONES = ["严谨型", "鼓励型", "中立型", "激进型", "保守型"]
+
 
 async def resolve_agent_config(
     db: AsyncSession,
     cfg: AgentConfig,
     decision_mode: str,
     index: int,
+    used_tones: set | None = None,
 ) -> dict:
     """
     返回 dict: agent_name, role_description, focus_area, tone,
@@ -37,7 +43,15 @@ async def resolve_agent_config(
 
     role_description = cfg.role_description or (template.role_description if template else None)
     focus_area = cfg.focus_area or (template.focus_area if template else None)
+    # tone: 用户显式设定 > 模板设定 > 随机分配（尽量不同 Agent 分配不同性格）
     tone = cfg.tone or (template.tone if template else None)
+    if not tone:
+        available = [t for t in AVAILABLE_TONES if used_tones is None or t not in used_tones]
+        if not available:
+            available = AVAILABLE_TONES
+        tone = random.choice(available)
+    if used_tones is not None:
+        used_tones.add(tone)
 
     stance = cfg.stance
     if decision_mode == "debate":

@@ -98,6 +98,23 @@ class SendMessageThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+# ========== 后台加载消息的线程 ==========
+class LoadMessagesThread(QThread):
+    loaded = pyqtSignal(list)
+
+    def __init__(self, api, task_id):
+        super().__init__()
+        self.api = api
+        self.task_id = task_id
+
+    def run(self):
+        try:
+            messages = self.api.get_messages(self.task_id)
+            self.loaded.emit(messages)
+        except Exception:
+            self.loaded.emit([])
+
+
 # ========== 正反方辩论的线程 ==========
 class AgentExchangeThread(QThread):
     finished = pyqtSignal(bool)
@@ -115,6 +132,28 @@ class AgentExchangeThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+# ========== 初始消息发送线程 ==========
+class InitialMessageThread(QThread):
+    finished = pyqtSignal(bool)
+    error = pyqtSignal(str)
+
+    def __init__(self, api, task_id, decision_mode):
+        super().__init__()
+        self.api = api
+        self.task_id = task_id
+        self.decision_mode = decision_mode
+
+    def run(self):
+        try:
+            reply_scope = "all_brief" if self.decision_mode != "debate" else "debate_round"
+            success = self.api.send_message(
+                self.task_id, "请各位专家对当前问题给出初步分析。", reply_scope
+            )
+            self.finished.emit(success)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class DiscussionWidget(QWidget):
     def __init__(self, user_info, api_client, stack, task_id, question, decision_mode):
         super().__init__()
@@ -128,11 +167,31 @@ class DiscussionWidget(QWidget):
         self.status_timer = None        # 定时查询任务状态
         self._finalizing = False        # 防止重复提交 finalize
         self.fetch_thread = None        # 后台线程
+        self._load_thread = None        # 消息加载线程
+        self._thinking_bubble = None    # 思考中气泡引用
+        self._thinking_shown = False    # 是否已显示思考中
 
         self.init_ui()
-        self.load_messages()
-        self.auto_send_initial_message()
+        self._add_thinking_bubble("专家们正在思考您的问题...")
         self.start_polling()
+
+        # 异步发送初始消息，不阻塞 UI
+        self._send_initial_async()
+
+        # 注册到侧边栏（延迟，等 widget 挂到窗口上）
+        QTimer.singleShot(0, self._register_in_sidebar)
+
+    def _register_in_sidebar(self):
+        """在侧边栏注册"返回讨论室"按钮。"""
+        main_win = self.window()
+        if main_win and hasattr(main_win, 'set_active_discussion'):
+            main_win.set_active_discussion(self)
+
+    def _unregister_from_sidebar(self):
+        """从侧边栏移除讨论室按钮。"""
+        main_win = self.window()
+        if main_win and hasattr(main_win, 'clear_active_discussion'):
+            main_win.clear_active_discussion()
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -182,30 +241,69 @@ class DiscussionWidget(QWidget):
 
         self.setLayout(layout)
 
-    def load_messages(self):
+    def _send_initial_async(self):
+        """异步发送初始消息，不阻塞 UI。"""
         messages = self.api.get_messages(self.task_id)
-        self.display_messages(messages)
-
-    def auto_send_initial_message(self):
-        messages = self.api.get_messages(self.task_id)
-        # 检查是否已有用户或 Agent 发言
         has_user_or_agent = any(msg.get("role") in ("user", "agent") for msg in messages)
         if not has_user_or_agent:
-            initial_content = "请各位专家对当前问题给出初步分析。"
-            reply_scope = "all_brief" if self.decision_mode != "debate" else "debate_round"
-            success = self.api.send_message(self.task_id, initial_content, reply_scope)
-            if success:
-                self.load_messages()
+            self.init_thread = InitialMessageThread(self.api, self.task_id, self.decision_mode)
+            self.init_thread.finished.connect(self._on_initial_sent)
+            self.init_thread.error.connect(lambda e: self._remove_thinking_bubble())
+            self.init_thread.start()
+        else:
+            # 已有消息，直接加载
+            self.load_messages()
+
+    def _on_initial_sent(self, success):
+        """初始消息发送完成，立即刷新。"""
+        self._remove_thinking_bubble()
+        if success:
+            self.load_messages()
+            # 重新加思考中，等待 AI 回复
+            self._add_thinking_bubble("专家们正在分析...")
+
+    # ── 思考中提示 ──────────────────────
+
+    def _add_thinking_bubble(self, text="正在思考..."):
+        """添加一个"思考中"的气泡。"""
+        if self._thinking_shown:
+            return
+        from datetime import datetime
+        time_str = datetime.now().strftime("%H:%M")
+        self._thinking_bubble = MessageBubble("agent", text, time_str, "思考中")
+        self.chat_layout.addWidget(self._thinking_bubble)
+        self._thinking_shown = True
+        QTimer.singleShot(50, lambda: self.scroll_area.verticalScrollBar().setValue(
+            self.scroll_area.verticalScrollBar().maximum()
+        ))
+
+    def _remove_thinking_bubble(self):
+        """移除思考中气泡。"""
+        if self._thinking_bubble and self._thinking_shown:
+            self.chat_layout.removeWidget(self._thinking_bubble)
+            self._thinking_bubble.deleteLater()
+            self._thinking_bubble = None
+            self._thinking_shown = False
+
+    def load_messages(self):
+        """异步加载消息 — 不阻塞 UI。"""
+        if self._load_thread is not None and self._load_thread.isRunning():
+            return  # 上一次加载还在进行中，跳过
+        self._load_thread = LoadMessagesThread(self.api, self.task_id)
+        self._load_thread.loaded.connect(self.display_messages)
+        self._load_thread.start()
+
+    # 删除旧的 auto_send_initial_message
+    # def auto_send_initial_message(self): ...  (已用 _send_initial_async 替代)
 
     def display_messages(self, messages):
-        # 清空旧消息
-        while self.chat_layout.count():
-            item = self.chat_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        # 增量更新：只追加新消息，避免销毁重建导致打字卡顿
+        current_count = self.chat_layout.count()
+        # 如果思考气泡在，算上它的偏移
+        offset = 1 if self._thinking_shown else 0
+        new_messages = messages[current_count - offset:] if current_count > offset else messages
 
-        # 新消息
-        for msg in messages:
+        for msg in new_messages:
             role = msg.get("role", "")
             agent_name = msg.get("agent_name", "")
             content = msg.get("content", "")
@@ -213,12 +311,23 @@ class DiscussionWidget(QWidget):
             time_str = created_at.split("T")[1][:5] if "T" in created_at else ""
 
             bubble = MessageBubble(role, content, time_str, agent_name)
-            self.chat_layout.addWidget(bubble)
+            # 插入到思考气泡之前
+            if self._thinking_shown and self._thinking_bubble:
+                idx = self.chat_layout.indexOf(self._thinking_bubble)
+                self.chat_layout.insertWidget(idx, bubble)
+            else:
+                self.chat_layout.addWidget(bubble)
 
-        # 自动滚动到底部
-        QTimer.singleShot(50, lambda: self.scroll_area.verticalScrollBar().setValue(
-            self.scroll_area.verticalScrollBar().maximum()
-        ))
+        # 收到 Agent 回复时移除思考中
+        has_agent = any(m.get("role") == "agent" for m in new_messages)
+        if has_agent:
+            self._remove_thinking_bubble()
+
+        # 有新消息时滚动到底部
+        if new_messages:
+            QTimer.singleShot(50, lambda: self.scroll_area.verticalScrollBar().setValue(
+                self.scroll_area.verticalScrollBar().maximum()
+            ))
 
     def send_message(self):
         text = self.input_edit.text().strip()
@@ -237,8 +346,9 @@ class DiscussionWidget(QWidget):
         self.send_btn.setText("发送")
         if success:
             self.input_edit.clear()
-            # 立即刷新一次消息（轮询会持续刷新，但主动刷一次体验更好）
             self.load_messages()
+            # 等待 AI 回复时显示思考中
+            self._add_thinking_bubble("专家们正在回复...")
         else:
             QMessageBox.warning(self, "错误", "发送失败")
 
@@ -259,7 +369,8 @@ class DiscussionWidget(QWidget):
         self.exchange_btn.setEnabled(True)
         self.exchange_btn.setText("辩手交锋")
         if success:
-            self.load_messages()   # 刷新消息
+            self._add_thinking_bubble("辩手们正在交锋...")
+            self.load_messages()
         else:
             QMessageBox.warning(self, "错误", "交锋失败，请重试")
 
@@ -313,6 +424,7 @@ class DiscussionWidget(QWidget):
 
     def on_result_ready(self, result_data):
         self.fetch_thread = None
+        self._unregister_from_sidebar()
         # 跳转到结果页
         for i in range(self.stack.count()):
             w = self.stack.widget(i)

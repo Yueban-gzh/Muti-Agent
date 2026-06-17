@@ -95,7 +95,7 @@ class UserHistoryWidget(QWidget):
             discussion_widget = DiscussionWidget(
                 self.user_info, self.api, self.stack,
                 task_id, task["question"], task.get("decision_mode", "multi_angle")
-        )
+            )
             self.stack.addWidget(discussion_widget)
             self.stack.setCurrentWidget(discussion_widget)
         else:

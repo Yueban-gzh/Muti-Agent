@@ -55,7 +55,7 @@ async def api_chat_completion(
     for attempt in range(1 + DEEPSEEK_MAX_RETRIES):
         try:
             async with httpx.AsyncClient(timeout=DEEPSEEK_TIMEOUT, trust_env=False) as client:
-                logger.info("调用 DeepSeek API（第 %d 次）...", attempt + 1)
+                logger.info("调用 LLM API %s（第 %d 次）...", api_url, attempt + 1)
                 response = await client.post(api_url, json=payload, headers=headers)
 
                 if response.status_code == 200:
@@ -65,7 +65,7 @@ async def api_chat_completion(
 
                 error_detail = response.text
                 last_error = f"HTTP {response.status_code}: {error_detail[:500]}"
-                logger.warning("API 非 200: %s", last_error[:300])
+                logger.warning("LLM API 非 200: %s", last_error[:300])
                 if 400 <= response.status_code < 500:
                     break
 

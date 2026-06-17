@@ -42,6 +42,14 @@ class RefreshStatsThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+MODE_MAP = {
+    "多角度分析": "multi_angle",
+    "正反辩论": "debate",
+    "专家会诊": "expert_consult",
+    "风险评审": "risk_review",
+}
+
+
 class UserHomeWidget(QWidget):
     def __init__(self, user_info, api_client, stack, result_widget):
         super().__init__()
@@ -180,13 +188,7 @@ class UserHomeWidget(QWidget):
             QMessageBox.warning(self, "错误", "请输入决策问题")
             return
 
-        mode_map = {
-            "多角度分析": "multi_angle",
-            "正反辩论": "debate",
-            "专家会诊": "expert_consult",
-            "风险评审": "risk_review"
-        }
-        decision_mode = mode_map[self.mode_combo.currentText()]
+        decision_mode = MODE_MAP[self.mode_combo.currentText()]
 
         agents = []
         for idx, inp in enumerate(self.agent_inputs):
@@ -234,7 +236,7 @@ class UserHomeWidget(QWidget):
             discussion_widget = DiscussionWidget(
                 self.user_info, self.api, self.stack,
                 task_id, self.question_edit.toPlainText().strip(),
-                mode_map[self.mode_combo.currentText()]
+                MODE_MAP[self.mode_combo.currentText()]
             )
             self.stack.addWidget(discussion_widget)
             self.stack.setCurrentWidget(discussion_widget)
