@@ -98,6 +98,23 @@ class SendMessageThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+# ========== 后台加载消息的线程 ==========
+class LoadMessagesThread(QThread):
+    loaded = pyqtSignal(list)
+
+    def __init__(self, api, task_id):
+        super().__init__()
+        self.api = api
+        self.task_id = task_id
+
+    def run(self):
+        try:
+            messages = self.api.get_messages(self.task_id)
+            self.loaded.emit(messages)
+        except Exception:
+            self.loaded.emit([])
+
+
 # ========== 正反方辩论的线程 ==========
 class AgentExchangeThread(QThread):
     finished = pyqtSignal(bool)
@@ -150,6 +167,7 @@ class DiscussionWidget(QWidget):
         self.status_timer = None        # 定时查询任务状态
         self._finalizing = False        # 防止重复提交 finalize
         self.fetch_thread = None        # 后台线程
+        self._load_thread = None        # 消息加载线程
         self._thinking_bubble = None    # 思考中气泡引用
         self._thinking_shown = False    # 是否已显示思考中
 
@@ -268,8 +286,12 @@ class DiscussionWidget(QWidget):
             self._thinking_shown = False
 
     def load_messages(self):
-        messages = self.api.get_messages(self.task_id)
-        self.display_messages(messages)
+        """异步加载消息 — 不阻塞 UI。"""
+        if self._load_thread is not None and self._load_thread.isRunning():
+            return  # 上一次加载还在进行中，跳过
+        self._load_thread = LoadMessagesThread(self.api, self.task_id)
+        self._load_thread.loaded.connect(self.display_messages)
+        self._load_thread.start()
 
     # 删除旧的 auto_send_initial_message
     # def auto_send_initial_message(self): ...  (已用 _send_initial_async 替代)
